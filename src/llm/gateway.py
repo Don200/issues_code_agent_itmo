@@ -57,12 +57,28 @@ class BaseLLMProvider(ABC):
 
 
 class OpenAIProvider(BaseLLMProvider):
-    """OpenAI GPT provider."""
+    """OpenAI GPT provider (also supports OpenAI-compatible APIs)."""
 
-    def __init__(self, api_key: str, model: str = "gpt-4o-mini") -> None:
-        self._client = OpenAI(api_key=api_key)
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gpt-4o-mini",
+        base_url: str | None = None,
+        timeout: int = 120,
+    ) -> None:
+        # Support for custom base_url (Azure, Ollama, vLLM, LocalAI, OpenRouter, etc.)
+        self._client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
+        )
         self._model = model
-        self._log = logger.bind(component="openai_provider", model=model)
+        self._base_url = base_url
+        self._log = logger.bind(
+            component="openai_provider",
+            model=model,
+            base_url=base_url or "default",
+        )
 
     @retry(
         stop=stop_after_attempt(3),
@@ -288,8 +304,14 @@ class LLMGateway:
             self._provider = OpenAIProvider(
                 api_key=self._settings.openai_api_key,
                 model=self._settings.openai_model,
+                base_url=self._settings.openai_base_url,
+                timeout=self._settings.openai_timeout,
             )
-            self._log.info("provider_initialized", provider="openai")
+            self._log.info(
+                "provider_initialized",
+                provider="openai",
+                base_url=self._settings.openai_base_url or "default",
+            )
 
         elif self._settings.llm_provider == LLMProvider.YANDEX:
             if not self._settings.yandex_api_key or not self._settings.yandex_folder_id:

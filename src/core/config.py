@@ -37,8 +37,13 @@ class Settings(BaseSettings):
 
     # OpenAI Configuration
     openai_api_key: str | None = Field(default=None, description="OpenAI API key")
+    openai_base_url: str | None = Field(
+        default=None,
+        description="Custom base URL for OpenAI-compatible API (e.g., Azure, Ollama, vLLM)",
+    )
     openai_model: str = Field(default="gpt-4o-mini", description="OpenAI model to use")
     openai_max_tokens: int = Field(default=4096, description="Max tokens for OpenAI")
+    openai_timeout: int = Field(default=120, description="Request timeout in seconds")
 
     # YandexGPT Configuration
     yandex_api_key: str | None = Field(default=None, description="YandexGPT API key")
