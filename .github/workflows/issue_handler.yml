@@ -1,0 +1,103 @@
+name: Issue Handler - Code Agent
+
+on:
+  issues:
+    types: [opened, labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  process-issue:
+    runs-on: ubuntu-latest
+    # Only run if issue has 'agent' or 'auto' label
+    if: contains(github.event.issue.labels.*.name, 'agent') || contains(github.event.issue.labels.*.name, 'auto')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "SDLC Agent"
+          git config --global user.email "sdlc-agent@github.actions"
+
+      - name: Add processing comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: '🤖 **SDLC Agent** is processing this issue...\n\nI will analyze the requirements and create a Pull Request with the implementation.'
+            });
+
+      - name: Process Issue
+        id: process
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          YANDEX_API_KEY: ${{ secrets.YANDEX_API_KEY }}
+          YANDEX_FOLDER_ID: ${{ secrets.YANDEX_FOLDER_ID }}
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'openai' }}
+          MAX_ITERATIONS: ${{ vars.MAX_ITERATIONS || '5' }}
+        run: |
+          python -m src.cli process ${{ github.event.issue.number }} --log-level INFO --log-format json
+        continue-on-error: true
+
+      - name: Report success
+        if: steps.process.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: '✅ **SDLC Agent** has created a Pull Request!\n\nPlease review the changes. The AI Reviewer will automatically analyze the PR once CI completes.'
+            });
+
+            // Add label to indicate PR was created
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['pr-created']
+            });
+
+      - name: Report failure
+        if: steps.process.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: '❌ **SDLC Agent** encountered an error while processing this issue.\n\nPlease check the workflow logs for details, or try rephrasing the issue requirements.'
+            });
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['agent-failed']
+            });
