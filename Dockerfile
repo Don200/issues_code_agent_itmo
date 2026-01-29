@@ -21,9 +21,11 @@ COPY tests/ ./tests/
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-# Create non-root user
-RUN useradd -m -u 1000 agent && chown -R agent:agent /app
-USER agent
+# Create workspace directory
+RUN mkdir -p /app/workspace /app/logs
+
+# Configure git
+RUN git config --global --add safe.directory '*'
 
 # Default command
 ENTRYPOINT ["python", "-m", "src.cli"]
