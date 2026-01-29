@@ -16,7 +16,6 @@ RUN pip install --no-cache-dir -e ".[dev]"
 # Copy source code
 COPY src/ ./src/
 COPY tests/ ./tests/
-COPY workflows/ ./workflows/
 
 # Set environment variables
 ENV PYTHONPATH=/app
