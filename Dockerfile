@@ -28,5 +28,5 @@ RUN mkdir -p /app/workspace /app/logs
 RUN git config --global --add safe.directory '*'
 
 # Default command
-ENTRYPOINT ["python", "-m", "src.cli"]
+ENTRYPOINT ["sdlc-agent"]
 CMD ["--help"]
