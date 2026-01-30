@@ -229,7 +229,11 @@ class ReviewerAgent:
                 "action": "fix_ci",
                 "reason": "CI checks failed",
                 "failed_checks": [
-                    {"name": c.name, "conclusion": c.conclusion}
+                    {
+                        "name": c.name,
+                        "conclusion": c.conclusion,
+                        "output": c.output,
+                    }
                     for c in failed
                 ],
             }
