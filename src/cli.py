@@ -29,9 +29,12 @@ def create_agents(settings: Settings) -> tuple[CodeAgent, ReviewerAgent]:
         token=settings.github_token,
         repository=settings.github_repository,
     )
-    llm_gateway = LLMGateway(settings)
 
-    code_agent = CodeAgent(settings, github_client, llm_gateway)
+    # CodeAgent uses LangChain with tool calling
+    code_agent = CodeAgent(settings, github_client)
+
+    # ReviewerAgent still uses LLMGateway (for now)
+    llm_gateway = LLMGateway(settings)
     reviewer_agent = ReviewerAgent(settings, github_client, llm_gateway)
 
     return code_agent, reviewer_agent

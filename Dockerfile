@@ -17,6 +17,10 @@ RUN pip install --no-cache-dir -e ".[dev]"
 COPY src/ ./src/
 COPY tests/ ./tests/
 
+# Copy entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
@@ -24,9 +28,10 @@ ENV PYTHONUNBUFFERED=1
 # Create workspace directory
 RUN mkdir -p /app/workspace /app/logs
 
-# Configure git
-RUN git config --global --add safe.directory '*'
+# Configure git for commits
+RUN git config --global --add safe.directory '*' && \
+    git config --global user.email "agent@sdlc.local" && \
+    git config --global user.name "SDLC Agent"
 
-# Default command
-ENTRYPOINT ["sdlc-agent"]
+ENTRYPOINT ["/entrypoint.sh", "sdlc-agent"]
 CMD ["--help"]

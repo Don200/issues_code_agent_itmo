@@ -382,6 +382,7 @@ class LLMGateway:
             self._log.info(
                 "provider_initialized",
                 provider="openai",
+                model=self._settings.openai_model,
                 base_url=self._settings.openai_base_url or "default",
                 langfuse_enabled=_langfuse_enabled,
             )
@@ -394,7 +395,11 @@ class LLMGateway:
                 folder_id=self._settings.yandex_folder_id,
                 model=self._settings.yandex_model,
             )
-            self._log.info("provider_initialized", provider="yandex")
+            self._log.info(
+                "provider_initialized",
+                provider="yandex",
+                model=self._settings.yandex_model,
+            )
 
     def generate(
         self,
