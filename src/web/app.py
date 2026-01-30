@@ -410,25 +410,82 @@ async def run_agent_job(job: Job):
                 repository=settings.github_repository,
             )
 
-            agent = CodeAgent(settings, github_client)
+            from src.agents.reviewer_agent import ReviewerAgent
+            from src.llm.gateway import LLMGateway
 
-            # Capture logs
-            def log_callback(msg: str):
-                job.logs.append(msg)
+            code_agent = CodeAgent(settings, github_client)
+            llm_gateway = LLMGateway(settings)
+            reviewer_agent = ReviewerAgent(settings, github_client, llm_gateway)
 
-            # Process issue
-            job.logs.append(f"📋 Processing issue #{job.issue_number}...")
-            result = agent.process_issue(job.issue_number, max_iterations=15)
+            # Step 1: Process issue and create PR
+            job.logs.append(f"═══ Step 1: Process Issue #{job.issue_number} ═══")
+            result = code_agent.process_issue(job.issue_number, max_iterations=15)
 
-            if result.get("success"):
-                job.status = JobStatus.SUCCESS
-                job.pr_url = result.get("pr_url")
-                job.result = result
-                job.logs.append(f"✅ Success! PR: {job.pr_url}")
-            else:
+            if not result.get("success"):
                 job.status = JobStatus.FAILED
-                job.error = result.get("summary", "Unknown error")
+                job.error = result.get("summary", "Failed to process issue")
                 job.logs.append(f"❌ Failed: {job.error}")
+                return
+
+            pr_number = result.get("pr_number")
+            job.pr_url = result.get("pr_url")
+            job.logs.append(f"✅ PR created: {job.pr_url}")
+
+            if not pr_number:
+                job.logs.append("⚠️ No PR number, skipping review")
+                job.status = JobStatus.SUCCESS
+                return
+
+            # Step 2: Review and fix loop
+            job.logs.append(f"═══ Step 2: Review & Fix Loop ═══")
+            max_iterations = 5
+            wait_ci = 30
+
+            for iteration in range(1, max_iterations + 1):
+                job.logs.append(f"── Review Iteration {iteration}/{max_iterations} ──")
+                job.logs.append(f"⏳ Waiting {wait_ci}s for CI...")
+                await asyncio.sleep(wait_ci)
+
+                job.logs.append("🔍 Checking PR status...")
+                decision = reviewer_agent.check_and_decide(pr_number, job.issue_number)
+
+                job.logs.append(f"Decision: {decision['action']} - {decision['reason']}")
+
+                if decision["action"] == "merge":
+                    job.logs.append("✅ PR ready to merge!")
+                    job.status = JobStatus.SUCCESS
+                    job.result = {"pr_number": pr_number, "action": "merge"}
+                    return
+
+                elif decision["action"] == "wait":
+                    job.logs.append("⏳ CI still running...")
+                    continue
+
+                elif decision["action"] in ("fix_ci", "request_fixes"):
+                    # Build feedback
+                    feedback_parts = ["CI/Review feedback:\n"]
+                    if "failed_checks" in decision:
+                        for check in decision["failed_checks"]:
+                            feedback_parts.append(f"- {check['name']}: {check.get('conclusion', 'failed')}")
+                            job.logs.append(f"❌ CI: {check['name']} failed")
+                    if "issues" in decision:
+                        for issue in decision["issues"]:
+                            feedback_parts.append(f"- [{issue['severity']}] {issue['description']}")
+                            job.logs.append(f"📝 Review: [{issue['severity']}] {issue['description']}")
+                    feedback_parts.append("\nFix the issues, commit, push, then call finish().")
+                    feedback = "\n".join(feedback_parts)
+
+                    job.logs.append("🔧 Applying fixes...")
+                    fix_result = code_agent.continue_with_feedback(feedback, max_iterations=10)
+
+                    if fix_result.get("success"):
+                        job.logs.append("✅ Fixes applied")
+                    else:
+                        job.logs.append("⚠️ Fix attempt incomplete")
+
+            job.logs.append(f"⚠️ Max iterations ({max_iterations}) reached")
+            job.status = JobStatus.SUCCESS
+            job.result = {"pr_number": pr_number, "action": "max_iterations"}
 
     except Exception as e:
         job.status = JobStatus.FAILED
