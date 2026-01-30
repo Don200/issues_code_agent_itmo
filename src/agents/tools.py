@@ -174,7 +174,10 @@ def create_tools(ctx: ToolContext) -> list:
                 return "No changes to commit"
 
             repo.index.commit(message)
-            repo.git.push("--set-upstream", "origin", ctx.current_branch, "--force")
+
+            # Push with token authentication
+            remote_url = f"https://x-access-token:{ctx.settings.github_token}@github.com/{ctx.settings.github_repository}.git"
+            repo.git.push(remote_url, f"HEAD:{ctx.current_branch}", "--force")
 
             logger.info("📤 Committed and pushed", branch=ctx.current_branch, message=message)
             return f"✅ Pushed to {ctx.current_branch}"
@@ -185,7 +188,13 @@ def create_tools(ctx: ToolContext) -> list:
     def create_pull_request(title: str, body: str) -> str:
         """Create a pull request with your changes."""
         if not ctx.current_branch:
-            return "Error: Create and push a branch first"
+            return "Error: You must create_branch() and commit_and_push() first!"
+
+        # Check if branch exists on remote
+        try:
+            ctx.github.repo.get_branch(ctx.current_branch)
+        except Exception:
+            return f"Error: Branch '{ctx.current_branch}' not found on GitHub. Did you call commit_and_push()?"
 
         try:
             pr = ctx.github.repo.create_pull(
