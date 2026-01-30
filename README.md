@@ -2,6 +2,8 @@
 
 Автономный агент для автоматизации разработки в GitHub. Получает задачу из Issue, пишет код, создаёт PR, анализирует результаты CI и итеративно исправляет ошибки до успешного прохождения всех проверок.
 
+**ссылка на репозиторий для теста** - https://github.com/Don200/itmo_test_repo 
+
 <img src="docs/images/web-ui.png" width="700" alt="Web Interface">
 
 ## Возможности
@@ -130,7 +132,7 @@ docker compose run --rm agent process 42
 ### Локальная установка
 
 ```bash
-pip install -e ".[dev]"
+uv sync
 
 # CLI
 sdlc-agent process 42
