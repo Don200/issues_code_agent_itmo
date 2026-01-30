@@ -176,7 +176,7 @@ class GitHubClient:
                 event=event,
                 comments=comments or [],
             )
-            self._log.info("pr_review_added", pr_number=pr_number, event=event)
+            self._log.info("pr_review_added", pr_number=pr_number, review_event=event)
         except GithubException as e:
             # GitHub doesn't allow APPROVE/REQUEST_CHANGES on own PRs
             # Fall back to regular comment
