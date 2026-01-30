@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.core.config import LLMProvider, Settings
+from src.core.config import Settings
 
 
 def test_settings_from_env() -> None:
@@ -14,7 +14,6 @@ def test_settings_from_env() -> None:
         "GITHUB_TOKEN": "test-token",
         "GITHUB_REPOSITORY": "owner/repo",
         "OPENAI_API_KEY": "sk-test",
-        "LLM_PROVIDER": "openai",
     }
 
     with patch.dict(os.environ, env, clear=True):
@@ -23,7 +22,6 @@ def test_settings_from_env() -> None:
         assert settings.github_token == "test-token"
         assert settings.github_repository == "owner/repo"
         assert settings.openai_api_key == "sk-test"
-        assert settings.llm_provider == LLMProvider.OPENAI
 
 
 def test_repository_owner_and_name() -> None:
@@ -31,6 +29,7 @@ def test_repository_owner_and_name() -> None:
     env = {
         "GITHUB_TOKEN": "test-token",
         "GITHUB_REPOSITORY": "myorg/myrepo",
+        "OPENAI_API_KEY": "sk-test",
     }
 
     with patch.dict(os.environ, env, clear=True):
@@ -45,6 +44,7 @@ def test_invalid_repository_format() -> None:
     env = {
         "GITHUB_TOKEN": "test-token",
         "GITHUB_REPOSITORY": "invalid-format",
+        "OPENAI_API_KEY": "sk-test",
     }
 
     with patch.dict(os.environ, env, clear=True):
@@ -52,24 +52,12 @@ def test_invalid_repository_format() -> None:
             Settings()
 
 
-def test_llm_provider_normalization() -> None:
-    """Test LLM provider value normalization."""
-    env = {
-        "GITHUB_TOKEN": "test-token",
-        "GITHUB_REPOSITORY": "owner/repo",
-        "LLM_PROVIDER": "OPENAI",  # uppercase
-    }
-
-    with patch.dict(os.environ, env, clear=True):
-        settings = Settings()
-        assert settings.llm_provider == LLMProvider.OPENAI
-
-
 def test_default_values() -> None:
     """Test default configuration values."""
     env = {
         "GITHUB_TOKEN": "test-token",
         "GITHUB_REPOSITORY": "owner/repo",
+        "OPENAI_API_KEY": "sk-test",
     }
 
     with patch.dict(os.environ, env, clear=True):
@@ -80,32 +68,29 @@ def test_default_values() -> None:
         assert settings.log_level == "INFO"
 
 
-def test_validate_openai_config() -> None:
-    """Test OpenAI configuration validation."""
+def test_langfuse_enabled() -> None:
+    """Test Langfuse enabled detection."""
     env = {
         "GITHUB_TOKEN": "test-token",
         "GITHUB_REPOSITORY": "owner/repo",
-        "LLM_PROVIDER": "openai",
-        # Missing OPENAI_API_KEY
+        "OPENAI_API_KEY": "sk-test",
+        "LANGFUSE_PUBLIC_KEY": "pk-lf-test",
+        "LANGFUSE_SECRET_KEY": "sk-lf-test",
     }
 
     with patch.dict(os.environ, env, clear=True):
         settings = Settings()
-        with pytest.raises(ValueError, match="OPENAI_API_KEY"):
-            settings.validate_llm_config()
+        assert settings.langfuse_enabled is True
 
 
-def test_validate_yandex_config() -> None:
-    """Test YandexGPT configuration validation."""
+def test_langfuse_disabled_without_keys() -> None:
+    """Test Langfuse disabled when keys not set."""
     env = {
         "GITHUB_TOKEN": "test-token",
         "GITHUB_REPOSITORY": "owner/repo",
-        "LLM_PROVIDER": "yandex",
-        "YANDEX_API_KEY": "test-key",
-        # Missing YANDEX_FOLDER_ID
+        "OPENAI_API_KEY": "sk-test",
     }
 
     with patch.dict(os.environ, env, clear=True):
         settings = Settings()
-        with pytest.raises(ValueError, match="YANDEX_FOLDER_ID"):
-            settings.validate_llm_config()
+        assert settings.langfuse_enabled is False

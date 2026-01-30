@@ -29,7 +29,6 @@ dependencies = [
     "click>=8.1.7",
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
-    "httpx>=0.26.0",
     "tenacity>=8.2.3",
     "structlog>=24.1.0",
     "rich>=13.7.0",
@@ -46,9 +45,6 @@ dev = [
     "mypy>=1.8.0",
     "types-requests>=2.31.0",
     "pre-commit>=3.6.0",
-]
-yandex = [
-    "yandexcloud>=0.250.0",
 ]
 
 [project.scripts]

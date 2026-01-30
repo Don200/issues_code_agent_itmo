@@ -12,9 +12,6 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
-      - YANDEX_API_KEY=${YANDEX_API_KEY:-}
-      - YANDEX_FOLDER_ID=${YANDEX_FOLDER_ID:-}
-      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - MAX_ITERATIONS=${MAX_ITERATIONS:-5}
       # Langfuse

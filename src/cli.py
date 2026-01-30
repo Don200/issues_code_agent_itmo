@@ -645,13 +645,8 @@ def config(ctx: click.Context) -> None:
         table.add_column("Value", style="green")
 
         table.add_row("Repository", settings.github_repository)
-        table.add_row("LLM Provider", settings.llm_provider.value)
-        table.add_row(
-            "Model",
-            settings.openai_model
-            if settings.llm_provider.value == "openai"
-            else settings.yandex_model,
-        )
+        table.add_row("Model", settings.openai_model)
+        table.add_row("Base URL", settings.openai_base_url or "api.openai.com")
         table.add_row("Max Iterations", str(settings.max_iterations))
         table.add_row("Log Level", settings.log_level)
         table.add_row("Workspace", str(settings.workspace_dir))

@@ -1,12 +1,9 @@
-"""Tools for the SDLC Agent - enables LLM to interact with codebase and GitHub."""
+"""Minimal tools for the SDLC Agent MVP."""
 
-import subprocess
 from pathlib import Path
-from typing import Any
 
 import structlog
-from langchain_core.tools import tool, StructuredTool
-from pydantic import BaseModel, Field
+from langchain_core.tools import StructuredTool
 
 from src.core.config import Settings
 from src.github.client import GitHubClient
@@ -17,7 +14,6 @@ logger = structlog.get_logger()
 class ToolContext:
     """Context holding dependencies for tools."""
 
-    # Fixed workspace path - repo is cloned by entrypoint.sh
     REPO_PATH = Path("/app/workspace/repo")
 
     def __init__(
@@ -28,21 +24,61 @@ class ToolContext:
         self.github = github_client
         self.settings = settings
         self.current_branch: str | None = None
+        self.task_finished = False
+        self.finish_message: str | None = None
 
     def get_workspace(self) -> Path:
-        """Get workspace path (repo is pre-cloned by entrypoint)."""
+        """Get workspace path."""
         return self.REPO_PATH
 
 
 def create_tools(ctx: ToolContext) -> list:
-    """Create tools with the given context."""
+    """Create minimal set of tools for MVP."""
 
-    # =============================================================================
-    # File System Tools
-    # =============================================================================
+    # =========================================================================
+    # FINISH TOOL - Most important! Agent must call this to complete.
+    # =========================================================================
 
-    def list_repository_files(directory: str = ".") -> str:
-        """List files in the repository directory."""
+    def finish(summary: str) -> str:
+        """
+        Call this when the task is COMPLETE. Provide a summary of what was done.
+
+        Args:
+            summary: Brief summary of completed work
+        """
+        ctx.task_finished = True
+        ctx.finish_message = summary
+        logger.info("🏁 TASK FINISHED", summary=summary)
+        return f"Task completed: {summary}"
+
+    # =========================================================================
+    # GitHub Tools
+    # =========================================================================
+
+    def get_issue(issue_number: int) -> str:
+        """Get details of a GitHub issue to understand the task."""
+        try:
+            issue = ctx.github.get_issue(issue_number)
+            result = f"""## Issue #{issue.number}: {issue.title}
+
+**State:** {issue.state}
+**Labels:** {', '.join([l.name for l in issue.labels]) or 'None'}
+
+### Description:
+{issue.body or 'No description'}
+"""
+            logger.info("📋 Got issue", number=issue_number, title=issue.title)
+            return result
+        except Exception as e:
+            logger.error("❌ Failed to get issue", error=str(e))
+            return f"Error: {e}"
+
+    # =========================================================================
+    # File Tools
+    # =========================================================================
+
+    def list_files(directory: str = ".") -> str:
+        """List files in directory to understand project structure."""
         workspace = ctx.get_workspace()
 
         try:
@@ -57,72 +93,55 @@ def create_tools(ctx: ToolContext) -> list:
                 prefix = "📁" if item.is_dir() else "📄"
                 items.append(f"{prefix} {item.relative_to(workspace)}")
 
-            return "\n".join(items) if items else "Directory is empty"
+            result = "\n".join(items[:50]) if items else "Empty directory"
+            logger.info("📂 Listed files", directory=directory, count=len(items))
+            return result
         except Exception as e:
-            return f"Error listing files: {e}"
+            logger.error("❌ Failed to list files", error=str(e))
+            return f"Error: {e}"
 
     def read_file(filepath: str) -> str:
-        """Read contents of a file from the repository."""
+        """Read a file to understand existing code."""
         workspace = ctx.get_workspace()
 
         try:
             file_path = workspace / filepath
             if file_path.exists():
-                return file_path.read_text(encoding="utf-8")
+                content = file_path.read_text(encoding="utf-8")
+                logger.info("📖 Read file", filepath=filepath, lines=len(content.splitlines()))
+                return content
 
-            # Try reading from GitHub if not cloned
+            # Fallback to GitHub API
             content = ctx.github.get_file_content(filepath)
             if content:
+                logger.info("📖 Read file from GitHub", filepath=filepath)
                 return content
 
             return f"File not found: {filepath}"
         except Exception as e:
-            return f"Error reading file: {e}"
+            logger.error("❌ Failed to read file", filepath=filepath, error=str(e))
+            return f"Error: {e}"
 
     def write_file(filepath: str, content: str) -> str:
-        """Write or update a file in the repository."""
+        """Write or update a file. Always write COMPLETE file content."""
         workspace = ctx.get_workspace()
 
         try:
             file_path = workspace / filepath
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding="utf-8")
-            logger.info("file_written", filepath=filepath)
-            return f"File written successfully: {filepath}"
+            logger.info("✏️ Wrote file", filepath=filepath, lines=len(content.splitlines()))
+            return f"✅ File written: {filepath}"
         except Exception as e:
-            return f"Error writing file: {e}"
+            logger.error("❌ Failed to write file", filepath=filepath, error=str(e))
+            return f"Error: {e}"
 
-    def search_code(pattern: str, file_glob: str = "*.py") -> str:
-        """Search for a pattern in repository files."""
-        workspace = ctx.get_workspace()
-
-        try:
-            results = []
-            for filepath in workspace.rglob(file_glob):
-                if ".git" in str(filepath):
-                    continue
-                try:
-                    content = filepath.read_text(encoding="utf-8")
-                    for i, line in enumerate(content.splitlines(), 1):
-                        if pattern.lower() in line.lower():
-                            rel_path = filepath.relative_to(workspace)
-                            results.append(f"{rel_path}:{i}: {line.strip()}")
-                except Exception:
-                    continue
-
-            if not results:
-                return f"No matches found for '{pattern}'"
-
-            return "\n".join(results[:50])
-        except Exception as e:
-            return f"Error searching: {e}"
-
-    # =============================================================================
+    # =========================================================================
     # Git Tools
-    # =============================================================================
+    # =========================================================================
 
     def create_branch(branch_name: str) -> str:
-        """Create and checkout a new git branch."""
+        """Create a new git branch for your changes."""
         from git import Repo
 
         workspace = ctx.get_workspace()
@@ -131,191 +150,103 @@ def create_tools(ctx: ToolContext) -> list:
             repo = Repo(workspace)
             repo.git.checkout("-b", branch_name)
             ctx.current_branch = branch_name
-            logger.info("branch_created", branch=branch_name)
-            return f"Created and checked out branch: {branch_name}"
+            logger.info("🌿 Created branch", branch=branch_name)
+            return f"✅ Branch created: {branch_name}"
         except Exception as e:
-            return f"Error creating branch: {e}"
+            logger.error("❌ Failed to create branch", error=str(e))
+            return f"Error: {e}"
 
-    def commit_changes(message: str) -> str:
-        """Stage all changes and create a commit."""
+    def commit_and_push(message: str) -> str:
+        """Commit all changes and push to remote."""
         from git import Repo
 
         workspace = ctx.get_workspace()
+
+        if not ctx.current_branch:
+            return "Error: Create a branch first with create_branch()"
 
         try:
             repo = Repo(workspace)
             repo.git.add("-A")
 
+            # Check if there are changes
             if not repo.index.diff("HEAD") and not repo.untracked_files:
                 return "No changes to commit"
 
             repo.index.commit(message)
-            logger.info("changes_committed", message=message)
-            return f"Changes committed: {message}"
-        except Exception as e:
-            return f"Error committing: {e}"
-
-    def push_changes() -> str:
-        """Push current branch to remote."""
-        from git import Repo
-
-        workspace = ctx.get_workspace()
-        if not ctx.current_branch:
-            return "Error: No branch set. Use create_branch first."
-
-        try:
-            repo = Repo(workspace)
             repo.git.push("--set-upstream", "origin", ctx.current_branch, "--force")
-            logger.info("changes_pushed", branch=ctx.current_branch)
-            return f"Pushed to origin/{ctx.current_branch}"
+
+            logger.info("📤 Committed and pushed", branch=ctx.current_branch, message=message)
+            return f"✅ Pushed to {ctx.current_branch}"
         except Exception as e:
-            return f"Error pushing: {e}"
+            logger.error("❌ Failed to commit/push", error=str(e))
+            return f"Error: {e}"
 
-    # =============================================================================
-    # GitHub Tools
-    # =============================================================================
+    def create_pull_request(title: str, body: str) -> str:
+        """Create a pull request with your changes."""
+        if not ctx.current_branch:
+            return "Error: Create and push a branch first"
 
-    def get_issue(issue_number: int) -> str:
-        """Get details of a GitHub issue."""
-        try:
-            issue = ctx.github.get_issue(issue_number)
-            return f"""## Issue #{issue.number}: {issue.title}
-
-**State:** {issue.state}
-**Labels:** {', '.join([l.name for l in issue.labels]) or 'None'}
-
-### Description:
-{issue.body or 'No description'}
-"""
-        except Exception as e:
-            return f"Error fetching issue: {e}"
-
-    def create_pull_request(title: str, body: str, head_branch: str) -> str:
-        """Create a pull request on GitHub."""
         try:
             pr = ctx.github.repo.create_pull(
                 title=title,
                 body=body,
-                head=head_branch,
+                head=ctx.current_branch,
                 base=ctx.github.repo.default_branch,
             )
-            logger.info("pr_created", number=pr.number, url=pr.html_url)
-            return f"Pull request created: {pr.html_url}"
+            logger.info("🔀 Created PR", number=pr.number, url=pr.html_url)
+            return f"✅ PR created: {pr.html_url}"
         except Exception as e:
-            return f"Error creating PR: {e}"
+            logger.error("❌ Failed to create PR", error=str(e))
+            return f"Error: {e}"
 
-    def get_pr_status(pr_number: int) -> str:
-        """Get status of a pull request including CI checks."""
-        try:
-            pr = ctx.github.repo.get_pull(pr_number)
-            commit = ctx.github.repo.get_commit(pr.head.sha)
-            checks = list(commit.get_check_runs())
-
-            status_lines = [
-                f"## PR #{pr.number}: {pr.title}",
-                f"**State:** {pr.state}",
-                f"**Mergeable:** {pr.mergeable}",
-                "",
-                "### CI Checks:",
-            ]
-
-            if checks:
-                for check in checks:
-                    icon = "✅" if check.conclusion == "success" else "❌" if check.conclusion == "failure" else "🔄"
-                    status_lines.append(f"  {icon} {check.name}: {check.conclusion or 'running'}")
-            else:
-                status_lines.append("  No checks found")
-
-            return "\n".join(status_lines)
-        except Exception as e:
-            return f"Error getting PR status: {e}"
-
-    # =============================================================================
-    # Code Execution Tools
-    # =============================================================================
-
-    def run_command(command: str) -> str:
-        """Run a shell command in the repository directory. Only allowed: pytest, ruff, black, mypy, pip"""
-        workspace = ctx.get_workspace()
-
-        allowed_prefixes = ["pytest", "ruff", "black", "mypy", "pip install", "python -m pytest"]
-        if not any(command.strip().startswith(p) for p in allowed_prefixes):
-            return f"Error: Command not allowed. Allowed: {allowed_prefixes}"
-
-        try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                cwd=workspace,
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            output = result.stdout + result.stderr
-            return output[:5000] if output else "Command completed with no output"
-        except subprocess.TimeoutExpired:
-            return "Error: Command timed out (120s limit)"
-        except Exception as e:
-            return f"Error running command: {e}"
-
-    # =============================================================================
+    # =========================================================================
     # Build Tool List
-    # =============================================================================
+    # =========================================================================
 
     return [
+        # Must call this when done!
         StructuredTool.from_function(
-            func=list_repository_files,
-            name="list_repository_files",
-            description="List files in the repository directory. Args: directory (str, default='.')",
+            func=finish,
+            name="finish",
+            description="REQUIRED: Call this when task is complete with a summary of what was done.",
+        ),
+        # GitHub
+        StructuredTool.from_function(
+            func=get_issue,
+            name="get_issue",
+            description="Get GitHub issue details. Args: issue_number (int)",
+        ),
+        # Files
+        StructuredTool.from_function(
+            func=list_files,
+            name="list_files",
+            description="List files in directory. Args: directory (str, default='.')",
         ),
         StructuredTool.from_function(
             func=read_file,
             name="read_file",
-            description="Read contents of a file from the repository. Args: filepath (str)",
+            description="Read file contents. Args: filepath (str)",
         ),
         StructuredTool.from_function(
             func=write_file,
             name="write_file",
-            description="Write or update a file in the repository. Args: filepath (str), content (str)",
+            description="Write complete file content. Args: filepath (str), content (str)",
         ),
-        StructuredTool.from_function(
-            func=search_code,
-            name="search_code",
-            description="Search for a pattern in repository files. Args: pattern (str), file_glob (str, default='*.py')",
-        ),
+        # Git
         StructuredTool.from_function(
             func=create_branch,
             name="create_branch",
-            description="Create and checkout a new git branch. Args: branch_name (str)",
+            description="Create git branch. Args: branch_name (str)",
         ),
         StructuredTool.from_function(
-            func=commit_changes,
-            name="commit_changes",
-            description="Stage all changes and create a commit. Args: message (str)",
-        ),
-        StructuredTool.from_function(
-            func=push_changes,
-            name="push_changes",
-            description="Push current branch to remote. No args.",
-        ),
-        StructuredTool.from_function(
-            func=get_issue,
-            name="get_issue",
-            description="Get details of a GitHub issue. Args: issue_number (int)",
+            func=commit_and_push,
+            name="commit_and_push",
+            description="Commit all changes and push. Args: message (str)",
         ),
         StructuredTool.from_function(
             func=create_pull_request,
             name="create_pull_request",
-            description="Create a pull request on GitHub. Args: title (str), body (str), head_branch (str)",
-        ),
-        StructuredTool.from_function(
-            func=get_pr_status,
-            name="get_pr_status",
-            description="Get status of a pull request including CI checks. Args: pr_number (int)",
-        ),
-        StructuredTool.from_function(
-            func=run_command,
-            name="run_command",
-            description="Run a shell command (only pytest, ruff, black, mypy, pip allowed). Args: command (str)",
+            description="Create PR. Args: title (str), body (str)",
         ),
     ]
