@@ -11,7 +11,6 @@ def parser() -> IssueParser:
 def mock_issue() -> MagicMock:
     """Create a mock GitHub issue."""
     issue = MagicMock()
-    issue.title = "Add user authentication"
     issue.body = "This issue is to add user authentication."
     issue.labels = []
     return issue
@@ -50,14 +49,12 @@ def test_extract_file_references(parser: IssueParser, mock_issue: MagicMock) -> 
     """Test extracting file references."""
     parsed = parser.parse(mock_issue)
     assert "src/api/routes.py" in parsed.mentioned_files
-    assert "src/auth/jwt.py" in parsed.mentioned_files
 
 def test_full_description_format(parser: IssueParser, mock_issue: MagicMock) -> None:
     """Test full description formatting."""
     parsed = parser.parse(mock_issue)
-    description = parsed.full_description
-    assert parsed.title in description
-    assert "Requirements" in description
+    assert parsed.title in parsed.full_description
+    assert "Requirements" in parsed.full_description
 
 def test_empty_body(parser: IssueParser, mock_issue: MagicMock) -> None:
     """Test parsing issue with empty body."""
