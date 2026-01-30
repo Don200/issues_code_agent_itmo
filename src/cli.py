@@ -303,11 +303,24 @@ def run_cycle(
         if pr_url:
             console.print(f"[green]✅ PR created: {pr_url}[/green]")
         elif branch:
-            console.print(f"[green]✅ Changes on branch: {branch}[/green]")
+            console.print(f"[yellow]Changes on branch: {branch}[/yellow]")
+
+        # If no PR was created, ask agent to create one
+        if not pr_number:
+            console.print("[yellow]⚠️ No PR created. Asking agent to create PR...[/yellow]")
+            fix_result = code_agent.continue_with_feedback(
+                feedback="You forgot to create a Pull Request! Please create a PR now with create_pull_request() and then call finish().",
+                max_iterations=5,
+            )
+            pr_number = fix_result.get("pr_number") or code_agent.state.pr_number
+            pr_url = code_agent.state.pr_url if code_agent.state else None
+
+            if pr_url:
+                console.print(f"[green]✅ PR created: {pr_url}[/green]")
 
         if not pr_number:
-            console.print("[yellow]⚠️ No PR created. Skipping review loop.[/yellow]")
-            sys.exit(0)
+            console.print("[bold red]❌ Could not create PR. Exiting.[/bold red]")
+            sys.exit(1)
 
         # Step 2: Review and fix loop
         console.print("\n[bold]═══ Step 2: Review & Fix Loop ═══[/bold]")

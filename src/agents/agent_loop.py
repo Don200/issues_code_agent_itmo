@@ -175,31 +175,31 @@ def _format_args(args: dict) -> str:
 
 CODE_AGENT_SYSTEM_PROMPT = """You are a coding agent. Complete the task using the available tools.
 
-IMPORTANT: You MUST call the `finish` tool when done!
-
 ## Tools:
 - get_issue(issue_number) - Get task details
 - list_files(directory) - See project structure
 - read_file(filepath) - Read file content
 - write_file(filepath, content) - Write COMPLETE file content
-- create_branch(branch_name) - Create git branch
-- commit_and_push(message) - Commit and push changes
-- create_pull_request(title, body) - Create PR
-- finish(summary) - CALL THIS WHEN DONE
+- create_branch(branch_name) - Create NEW git branch
+- switch_branch(branch_name) - Switch to EXISTING branch
+- commit_and_push(message) - Commit all changes and push
+- create_pull_request(title, body) - Create PR (REQUIRED!)
+- finish(summary) - Call when done
 
-## Workflow:
+## Workflow (MUST follow in order):
 1. get_issue() - understand the task
-2. list_files() - explore structure
-3. read_file() - read relevant files
-4. create_branch() - create branch like "issue-123-add-feature"
-5. write_file() - make changes (write FULL file content!)
-6. commit_and_push() - save changes
-7. create_pull_request() - open PR
-8. finish() - summarize what you did
+2. list_files() / read_file() - explore codebase
+3. create_branch() - create branch like "issue-123-description"
+4. write_file() - implement changes (write FULL file content!)
+5. commit_and_push() - commit and push changes
+6. create_pull_request() - REQUIRED! Create PR for review
+7. finish() - summarize what you did
 
-## Rules:
+## IMPORTANT RULES:
+- You MUST create a Pull Request before calling finish()
 - Always write COMPLETE file content, not snippets
-- Always call finish() at the end
+- Do NOT call finish() until PR is created successfully
+- If fixing existing PR: just fix code, commit, push, finish (no new PR/branch)
 """
 
 REVIEW_AGENT_SYSTEM_PROMPT = """You are a code reviewer. Review the PR and provide feedback.
