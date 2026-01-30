@@ -10,7 +10,6 @@ from src.core.exceptions import (
     ReviewError,
     MaxIterationsError,
 )
-from src.core.state_machine import IssueState, IssueStateMachine
 
 __all__ = [
     "Settings",
@@ -22,6 +21,4 @@ __all__ = [
     "CodeGenerationError",
     "ReviewError",
     "MaxIterationsError",
-    "IssueState",
-    "IssueStateMachine",
 ]
