@@ -234,18 +234,129 @@ def check(ctx: click.Context, pr_number: int, issue: int | None) -> None:
 
 @main.command()
 @click.argument("issue_number", type=int)
+@click.option(
+    "--max-iterations",
+    default=5,
+    type=int,
+    help="Maximum fix iterations",
+)
+@click.option(
+    "--wait-ci",
+    default=30,
+    type=int,
+    help="Seconds to wait for CI between iterations",
+)
 @click.pass_context
 def run_cycle(
     ctx: click.Context,
     issue_number: int,
+    max_iterations: int,
+    wait_ci: int,
 ) -> None:
-    """Run full SDLC cycle: Issue → PR → Review → Auto-fix loop.
+    """Run full SDLC cycle: Issue → PR → Review → Auto-fix loop."""
+    import time
 
-    NOTE: Currently disabled in MVP. Use 'process' command instead.
-    """
-    console.print("[yellow]run-cycle is disabled in MVP. Use 'process' instead:[/yellow]")
-    console.print(f"  sdlc-agent process {issue_number}")
-    sys.exit(0)
+    console.print(
+        Panel(
+            f"Running Full Cycle for Issue #{issue_number}",
+            title="🔄 SDLC Cycle",
+            border_style="magenta",
+        )
+    )
+
+    try:
+        settings = get_settings()
+        code_agent, reviewer_agent = create_agents(settings)
+
+        # Step 1: Process issue and create PR
+        console.print("\n[bold]═══ Step 1: Process Issue & Create PR ═══[/bold]")
+
+        with console.status("[bold green]Processing issue..."):
+            result = code_agent.process_issue(issue_number)
+
+        if not result["success"]:
+            console.print("[bold red]❌ Failed to process issue[/bold red]")
+            if result.get("summary"):
+                console.print(f"[dim]{result['summary']}[/dim]")
+            sys.exit(1)
+
+        branch = result.get("branch")
+        console.print(f"[green]✅ PR created on branch: {branch}[/green]")
+
+        # Find PR number by branch
+        github_client = GitHubClient(
+            token=settings.github_token,
+            repository=settings.github_repository,
+        )
+        pr_number = None
+        for pr in github_client.repo.get_pulls(state="open", head=f"{github_client.repo.owner.login}:{branch}"):
+            pr_number = pr.number
+            break
+
+        if not pr_number:
+            console.print("[yellow]⚠️ Could not find PR. Skipping review loop.[/yellow]")
+            sys.exit(0)
+
+        console.print(f"[green]Found PR #{pr_number}[/green]")
+
+        # Step 2: Review and fix loop
+        console.print("\n[bold]═══ Step 2: Review & Fix Loop ═══[/bold]")
+
+        iteration = 0
+        while iteration < max_iterations:
+            iteration += 1
+            console.print(f"\n[bold cyan]── Iteration {iteration}/{max_iterations} ──[/bold cyan]")
+
+            # Wait for CI
+            console.print(f"[dim]Waiting {wait_ci}s for CI...[/dim]")
+            time.sleep(wait_ci)
+
+            # Check and review
+            with console.status("[bold]Reviewing PR..."):
+                decision = reviewer_agent.check_and_decide(pr_number, issue_number)
+
+            console.print(f"Action: [bold]{decision['action']}[/bold]")
+            console.print(f"Reason: {decision['reason']}")
+
+            if decision["action"] == "merge":
+                console.print("\n[bold green]✅ PR is ready to merge![/bold green]")
+                console.print(f"[dim]Merge it: gh pr merge {pr_number} --squash[/dim]")
+                break
+            elif decision["action"] == "wait":
+                console.print("[yellow]⏳ CI still running, will check again...[/yellow]")
+                continue
+            elif decision["action"] in ("fix_ci", "request_fixes"):
+                # Get review feedback for fixes
+                review_feedback = decision.get("review_summary", "")
+                if "issues" in decision:
+                    issues_text = "\n".join(
+                        f"- [{i['severity']}] {i['description']}"
+                        for i in decision["issues"]
+                    )
+                    review_feedback += f"\n\nIssues:\n{issues_text}"
+
+                console.print("[yellow]🔧 Applying fixes...[/yellow]")
+                with console.status("[bold]Generating fixes..."):
+                    fix_result = code_agent.fix_based_on_review(
+                        issue_number=issue_number,
+                        pr_number=pr_number,
+                        review_feedback=review_feedback,
+                        iteration=iteration,
+                    )
+
+                if fix_result.get("success"):
+                    console.print("[green]✅ Fixes applied[/green]")
+                else:
+                    console.print("[red]❌ Fix attempt failed[/red]")
+        else:
+            console.print(
+                f"\n[bold red]⚠️ Max iterations ({max_iterations}) reached[/bold red]"
+            )
+            console.print("Manual review may be needed.")
+
+    except SDLCAgentError as e:
+        console.print(f"[bold red]Error:[/bold red] {e.message}")
+        sys.exit(1)
 
 
 @main.command()
