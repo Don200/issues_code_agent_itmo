@@ -6,7 +6,6 @@ build-backend = "hatchling.build"
 name = "sdlc-agent"
 version = "0.1.0"
 description = "Automated SDLC Agent System for GitHub"
-readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
