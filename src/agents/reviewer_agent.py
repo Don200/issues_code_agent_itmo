@@ -203,6 +203,8 @@ class ReviewerAgent:
         """
         Check PR status and decide on next action.
 
+        Always performs AI code review regardless of CI status.
+
         Args:
             pr_number: PR number
             issue_number: Related issue number
@@ -212,7 +214,7 @@ class ReviewerAgent:
         """
         pr_info = self._pr_manager.get_pr_info(pr_number)
 
-        # Check CI status first
+        # Check CI status first - if still running, wait
         if not pr_info.ci_completed:
             return {
                 "action": "wait",
@@ -223,43 +225,58 @@ class ReviewerAgent:
                 ],
             }
 
-        if not pr_info.ci_passed:
-            failed = pr_info.failed_checks
-            return {
-                "action": "fix_ci",
-                "reason": "CI checks failed",
-                "failed_checks": [
-                    {
-                        "name": c.name,
-                        "conclusion": c.conclusion,
-                        "output": c.output,
-                    }
-                    for c in failed
-                ],
-            }
-
-        # Perform code review
+        # Always perform AI code review (regardless of CI status)
         review_result = self.review_pr(pr_number, issue_number)
 
-        if review_result.decision == ReviewDecision.APPROVED:
+        # Build response with both CI and review info
+        ci_failed = not pr_info.ci_passed
+        review_has_issues = review_result.decision == ReviewDecision.CHANGES_REQUESTED
+
+        # Collect failed CI checks
+        failed_checks = []
+        if ci_failed:
+            failed_checks = [
+                {
+                    "name": c.name,
+                    "conclusion": c.conclusion,
+                    "output": c.output,
+                }
+                for c in pr_info.failed_checks
+            ]
+
+        # Collect review issues
+        review_issues = [
+            {
+                "severity": i.severity,
+                "description": i.description,
+                "file": i.file,
+                "line": i.line,
+                "suggestion": i.suggestion,
+            }
+            for i in review_result.issues
+        ]
+
+        # Decide action
+        if ci_failed or review_has_issues:
+            action = "fix_ci" if ci_failed else "request_fixes"
+            reason_parts = []
+            if ci_failed:
+                reason_parts.append("CI checks failed")
+            if review_has_issues:
+                reason_parts.append("code review found issues")
+
             return {
-                "action": "merge",
-                "reason": "Review approved, all checks passed",
+                "action": action,
+                "reason": " and ".join(reason_parts).capitalize(),
+                "failed_checks": failed_checks,
                 "review_summary": review_result.summary,
+                "issues": review_issues,
             }
         else:
             return {
-                "action": "request_fixes",
-                "reason": "Code review requested changes",
+                "action": "merge",
+                "reason": "CI passed and review approved",
                 "review_summary": review_result.summary,
-                "issues": [
-                    {
-                        "severity": i.severity,
-                        "description": i.description,
-                        "suggestion": i.suggestion,
-                    }
-                    for i in review_result.issues
-                ],
             }
 
     def _generate_review(

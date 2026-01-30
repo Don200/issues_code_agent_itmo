@@ -1,9 +1,10 @@
 """Simple Agent Loop with LangChain - MVP version."""
 
+from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from rich.console import Console
 from rich.panel import Panel
@@ -15,6 +16,17 @@ console = Console()
 
 # Reasonable limit for MVP
 MAX_ITERATIONS = 15
+
+
+@dataclass
+class AgentState:
+    """Persistent agent state between iterations."""
+    messages: list[BaseMessage] = field(default_factory=list)
+    branch: str | None = None
+    pr_number: int | None = None
+    pr_url: str | None = None
+    finished: bool = False
+    finish_message: str | None = None
 
 
 def create_llm(settings: Settings) -> ChatOpenAI:
@@ -51,10 +63,11 @@ def run_agent_loop(
     llm: ChatOpenAI,
     tools: list,
     system_prompt: str,
-    user_message: str,
+    user_message: str | None = None,
     tool_context: Any = None,
     max_iterations: int = MAX_ITERATIONS,
-) -> str:
+    state: AgentState | None = None,
+) -> tuple[str, AgentState]:
     """
     Run agent loop until task is complete or max iterations.
 
@@ -62,39 +75,43 @@ def run_agent_loop(
         llm: LangChain LLM
         tools: List of tools
         system_prompt: System prompt
-        user_message: Task description
+        user_message: Task description (for new conversation) or feedback (for continuation)
         tool_context: ToolContext to check task_finished flag
         max_iterations: Max iterations before giving up
+        state: Existing state to continue from (None = new conversation)
 
     Returns:
-        Final result message
+        Tuple of (result message, updated state)
     """
     llm_with_tools = llm.bind_tools(tools)
     tools_by_name = {t.name: t for t in tools}
 
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_message),
-    ]
+    # Initialize or continue state
+    if state is None:
+        state = AgentState()
+        state.messages = [SystemMessage(content=system_prompt)]
 
-    console.print(Panel(user_message, title="📋 Task", border_style="blue"))
+    # Add new user message if provided
+    if user_message:
+        state.messages.append(HumanMessage(content=user_message))
+        console.print(Panel(user_message, title="📋 Task", border_style="blue"))
 
     for iteration in range(1, max_iterations + 1):
         console.print(f"\n[bold cyan]── Iteration {iteration}/{max_iterations} ──[/bold cyan]")
 
         # Call LLM
         try:
-            response = llm_with_tools.invoke(messages)
+            response = llm_with_tools.invoke(state.messages)
         except Exception as e:
             console.print(f"[red]LLM Error: {e}[/red]")
             raise
 
-        messages.append(response)
+        state.messages.append(response)
 
         # Check if agent wants to respond without tools (done thinking)
         if not response.tool_calls:
             console.print("[green]Agent finished (no more tool calls)[/green]")
-            return response.content or "Task completed"
+            return response.content or "Task completed", state
 
         # Execute each tool call
         for tool_call in response.tool_calls:
@@ -117,15 +134,27 @@ def run_agent_loop(
                     result = f"Error: {e}"
                     console.print(f"     [red]{result}[/red]")
 
-            messages.append(ToolMessage(content=str(result), tool_call_id=tool_id))
+            state.messages.append(ToolMessage(content=str(result), tool_call_id=tool_id))
+
+            # Track branch and PR from tool results
+            if tool_name == "create_branch" and not result.startswith("Error"):
+                state.branch = tool_args.get("branch_name")
+            elif tool_name == "create_pull_request" and "PR created" in result:
+                # Extract PR URL from result like "✅ PR created: https://..."
+                import re
+                if match := re.search(r"https://[^\s]+/pull/(\d+)", result):
+                    state.pr_url = match.group(0)
+                    state.pr_number = int(match.group(1))
 
             # Check if finish was called
             if tool_context and tool_context.task_finished:
                 console.print("\n[bold green]✅ Task completed![/bold green]")
-                return tool_context.finish_message or "Task completed"
+                state.finished = True
+                state.finish_message = tool_context.finish_message
+                return tool_context.finish_message or "Task completed", state
 
     console.print(f"\n[bold red]⚠️ Max iterations ({max_iterations}) reached[/bold red]")
-    return "Task incomplete: reached maximum iterations"
+    return "Task incomplete: reached maximum iterations", state
 
 
 def _format_args(args: dict) -> str:

@@ -244,7 +244,7 @@ def check(ctx: click.Context, pr_number: int, issue: int | None) -> None:
     "--max-steps",
     default=15,
     type=int,
-    help="Maximum agent steps for initial processing (default: 15)",
+    help="Maximum agent steps per iteration (default: 15)",
 )
 @click.option(
     "--max-iterations",
@@ -266,7 +266,11 @@ def run_cycle(
     max_iterations: int,
     wait_ci: int,
 ) -> None:
-    """Run full SDLC cycle: Issue → PR → Review → Auto-fix loop."""
+    """Run full SDLC cycle: Issue → PR → Review → Auto-fix loop.
+
+    The agent maintains state between iterations - it remembers
+    what it did and just receives new feedback each time.
+    """
     import time
 
     console.print(
@@ -284,8 +288,7 @@ def run_cycle(
         # Step 1: Process issue and create PR
         console.print("\n[bold]═══ Step 1: Process Issue & Create PR ═══[/bold]")
 
-        with console.status("[bold green]Processing issue..."):
-            result = code_agent.process_issue(issue_number, max_iterations=max_steps)
+        result = code_agent.process_issue(issue_number, max_iterations=max_steps)
 
         if not result["success"]:
             console.print("[bold red]❌ Failed to process issue[/bold red]")
@@ -293,24 +296,18 @@ def run_cycle(
                 console.print(f"[dim]{result['summary']}[/dim]")
             sys.exit(1)
 
+        pr_number = result.get("pr_number")
+        pr_url = result.get("pr_url")
         branch = result.get("branch")
-        console.print(f"[green]✅ PR created on branch: {branch}[/green]")
 
-        # Find PR number by branch
-        github_client = GitHubClient(
-            token=settings.github_token,
-            repository=settings.github_repository,
-        )
-        pr_number = None
-        for pr in github_client.repo.get_pulls(state="open", head=f"{github_client.repo.owner.login}:{branch}"):
-            pr_number = pr.number
-            break
+        if pr_url:
+            console.print(f"[green]✅ PR created: {pr_url}[/green]")
+        elif branch:
+            console.print(f"[green]✅ Changes on branch: {branch}[/green]")
 
         if not pr_number:
-            console.print("[yellow]⚠️ Could not find PR. Skipping review loop.[/yellow]")
+            console.print("[yellow]⚠️ No PR created. Skipping review loop.[/yellow]")
             sys.exit(0)
-
-        console.print(f"[green]Found PR #{pr_number}[/green]")
 
         # Step 2: Review and fix loop
         console.print("\n[bold]═══ Step 2: Review & Fix Loop ═══[/bold]")
@@ -318,7 +315,7 @@ def run_cycle(
         iteration = 0
         while iteration < max_iterations:
             iteration += 1
-            console.print(f"\n[bold cyan]── Iteration {iteration}/{max_iterations} ──[/bold cyan]")
+            console.print(f"\n[bold cyan]── Review Iteration {iteration}/{max_iterations} ──[/bold cyan]")
 
             # Wait for CI
             console.print(f"[dim]Waiting {wait_ci}s for CI...[/dim]")
@@ -328,97 +325,37 @@ def run_cycle(
             with console.status("[bold]Reviewing PR..."):
                 decision = reviewer_agent.check_and_decide(pr_number, issue_number)
 
-            console.print(f"\n[bold]Decision:[/bold] {decision['action']}")
-            console.print(f"[bold]Reason:[/bold] {decision['reason']}")
-
-            # Show CI status if available
-            if "ci_status" in decision:
-                console.print("\n[bold]CI Status:[/bold]")
-                for check in decision["ci_status"]:
-                    console.print(f"  - {check['name']}: {check['status']}")
-
-            # Show failed checks details
-            if "failed_checks" in decision:
-                console.print("\n[bold red]Failed CI Checks:[/bold red]")
-                for check in decision["failed_checks"]:
-                    console.print(f"  - [red]{check['name']}[/red]: {check.get('conclusion', 'failed')}")
-                    if check.get("output"):
-                        output = check["output"]
-                        if isinstance(output, dict) and output.get("summary"):
-                            console.print(f"    [dim]{output['summary'][:300]}[/dim]")
-                        elif isinstance(output, str):
-                            console.print(f"    [dim]{output[:300]}[/dim]")
-
-            # Show review issues
-            if "issues" in decision:
-                console.print("\n[bold]Review Issues:[/bold]")
-                for issue in decision["issues"]:
-                    severity = issue.get("severity", "info")
-                    color = "red" if severity == "critical" else "yellow" if severity == "major" else "dim"
-                    console.print(f"  - [{color}][{severity}][/{color}] {issue['description']}")
-                    if issue.get("file"):
-                        console.print(f"    [dim]File: {issue['file']}:{issue.get('line', '')}[/dim]")
-
-            # Show review summary
-            if decision.get("review_summary"):
-                console.print(f"\n[bold]Review Summary:[/bold]\n{decision['review_summary']}")
+            # Display decision details
+            _display_review_decision(decision)
 
             if decision["action"] == "merge":
                 console.print("\n[bold green]✅ PR is ready to merge![/bold green]")
                 console.print(f"[dim]Merge it: gh pr merge {pr_number} --squash[/dim]")
                 break
+
             elif decision["action"] == "wait":
                 console.print("[yellow]⏳ CI still running, will check again...[/yellow]")
                 continue
+
             elif decision["action"] in ("fix_ci", "request_fixes"):
-                # Build review feedback for the model
-                review_feedback_parts = []
-
-                # Add failed CI checks info
-                if "failed_checks" in decision:
-                    ci_text = "Failed CI/CD checks:\n"
-                    for check in decision["failed_checks"]:
-                        ci_text += f"- {check['name']}: {check.get('conclusion', 'failed')}\n"
-                        if check.get("output"):
-                            output = check["output"]
-                            if isinstance(output, dict) and output.get("summary"):
-                                ci_text += f"  Error: {output['summary']}\n"
-                            elif isinstance(output, str):
-                                ci_text += f"  Error: {output}\n"
-                    review_feedback_parts.append(ci_text)
-
-                # Add review summary
-                if decision.get("review_summary"):
-                    review_feedback_parts.append(f"Review summary:\n{decision['review_summary']}")
-
-                # Add issues
-                if "issues" in decision:
-                    issues_text = "Issues found:\n" + "\n".join(
-                        f"- [{i['severity']}] {i['description']}" +
-                        (f" (file: {i['file']}:{i.get('line', '')})" if i.get('file') else "")
-                        for i in decision["issues"]
-                    )
-                    review_feedback_parts.append(issues_text)
-
-                review_feedback = "\n\n".join(review_feedback_parts)
+                # Build feedback message for the agent
+                feedback = _build_feedback_message(decision)
 
                 console.print("\n[yellow]🔧 Applying fixes...[/yellow]")
-                with console.status("[bold]Generating fixes..."):
-                    fix_result = code_agent.fix_based_on_review(
-                        issue_number=issue_number,
-                        pr_number=pr_number,
-                        review_feedback=review_feedback,
-                        iteration=iteration,
-                    )
+                console.print("[dim]Agent continues with full context from previous work[/dim]")
+
+                fix_result = code_agent.continue_with_feedback(
+                    feedback=feedback,
+                    max_iterations=max_steps,
+                )
 
                 if fix_result.get("success"):
-                    console.print("[green]✅ Fixes applied[/green]")
-                    if fix_result.get("summary"):
-                        console.print(f"[dim]{fix_result['summary']}[/dim]")
+                    console.print("[green]✅ Fixes applied and pushed[/green]")
                 else:
-                    console.print("[red]❌ Fix attempt failed[/red]")
-                    if fix_result.get("summary"):
-                        console.print(f"[dim]{fix_result['summary']}[/dim]")
+                    console.print("[yellow]⚠️ Fix attempt incomplete[/yellow]")
+
+                if fix_result.get("summary"):
+                    console.print(f"[dim]{fix_result['summary']}[/dim]")
         else:
             console.print(
                 f"\n[bold red]⚠️ Max iterations ({max_iterations}) reached[/bold red]"
@@ -428,6 +365,84 @@ def run_cycle(
     except SDLCAgentError as e:
         console.print(f"[bold red]Error:[/bold red] {e.message}")
         sys.exit(1)
+
+
+def _display_review_decision(decision: dict) -> None:
+    """Display review decision details."""
+    console.print(f"\n[bold]Decision:[/bold] {decision['action']}")
+    console.print(f"[bold]Reason:[/bold] {decision['reason']}")
+
+    # Show CI status if available
+    if "ci_status" in decision:
+        console.print("\n[bold]CI Status:[/bold]")
+        for check in decision["ci_status"]:
+            console.print(f"  - {check['name']}: {check['status']}")
+
+    # Show failed checks details
+    if "failed_checks" in decision:
+        console.print("\n[bold red]Failed CI Checks:[/bold red]")
+        for check in decision["failed_checks"]:
+            console.print(f"  - [red]{check['name']}[/red]: {check.get('conclusion', 'failed')}")
+            if check.get("output"):
+                output = check["output"]
+                if isinstance(output, dict) and output.get("summary"):
+                    console.print(f"    [dim]{output['summary'][:500]}[/dim]")
+                elif isinstance(output, str):
+                    console.print(f"    [dim]{output[:500]}[/dim]")
+
+    # Show review issues
+    if "issues" in decision:
+        console.print("\n[bold]Review Issues:[/bold]")
+        for issue in decision["issues"]:
+            severity = issue.get("severity", "info")
+            color = "red" if severity == "CRITICAL" else "yellow" if severity == "MAJOR" else "dim"
+            console.print(f"  - [{color}][{severity}][/{color}] {issue['description']}")
+            if issue.get("file"):
+                console.print(f"    [dim]File: {issue['file']}:{issue.get('line', '')}[/dim]")
+            if issue.get("suggestion"):
+                console.print(f"    [green]Suggestion: {issue['suggestion']}[/green]")
+
+    # Show review summary
+    if decision.get("review_summary"):
+        console.print(f"\n[bold]Review Summary:[/bold]\n{decision['review_summary']}")
+
+
+def _build_feedback_message(decision: dict) -> str:
+    """Build feedback message for agent from review decision."""
+    parts = ["CI/Review feedback - please fix the issues and push again:\n"]
+
+    # Add failed CI checks info
+    if "failed_checks" in decision:
+        parts.append("FAILED CI CHECKS:")
+        for check in decision["failed_checks"]:
+            parts.append(f"- {check['name']}: {check.get('conclusion', 'failed')}")
+            if check.get("output"):
+                output = check["output"]
+                if isinstance(output, dict) and output.get("summary"):
+                    parts.append(f"  Error details: {output['summary']}")
+                elif isinstance(output, str):
+                    parts.append(f"  Error details: {output}")
+        parts.append("")
+
+    # Add review summary
+    if decision.get("review_summary"):
+        parts.append(f"REVIEW SUMMARY:\n{decision['review_summary']}\n")
+
+    # Add issues
+    if "issues" in decision:
+        parts.append("ISSUES TO FIX:")
+        for i in decision["issues"]:
+            line = f"- [{i['severity']}] {i['description']}"
+            if i.get("file"):
+                line += f" (file: {i['file']}:{i.get('line', '')})"
+            if i.get("suggestion"):
+                line += f"\n  Suggestion: {i['suggestion']}"
+            parts.append(line)
+        parts.append("")
+
+    parts.append("Fix the issues, commit, push, then call finish().")
+
+    return "\n".join(parts)
 
 
 @main.command()

@@ -156,6 +156,22 @@ def create_tools(ctx: ToolContext) -> list:
             logger.error("❌ Failed to create branch", error=str(e))
             return f"Error: {e}"
 
+    def switch_branch(branch_name: str) -> str:
+        """Switch to an existing git branch."""
+        from git import Repo
+
+        workspace = ctx.get_workspace()
+
+        try:
+            repo = Repo(workspace)
+            repo.git.checkout(branch_name)
+            ctx.current_branch = branch_name
+            logger.info("🔀 Switched to branch", branch=branch_name)
+            return f"✅ Switched to branch: {branch_name}"
+        except Exception as e:
+            logger.error("❌ Failed to switch branch", error=str(e))
+            return f"Error: {e}"
+
     def commit_and_push(message: str) -> str:
         """Commit all changes and push to remote."""
         from git import Repo
@@ -246,7 +262,12 @@ def create_tools(ctx: ToolContext) -> list:
         StructuredTool.from_function(
             func=create_branch,
             name="create_branch",
-            description="Create git branch. Args: branch_name (str)",
+            description="Create NEW git branch. Args: branch_name (str)",
+        ),
+        StructuredTool.from_function(
+            func=switch_branch,
+            name="switch_branch",
+            description="Switch to EXISTING git branch. Args: branch_name (str)",
         ),
         StructuredTool.from_function(
             func=commit_and_push,
