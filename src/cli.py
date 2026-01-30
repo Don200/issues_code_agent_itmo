@@ -1,5 +1,6 @@
 """CLI interface for SDLC Agent System."""
 
+import atexit
 import sys
 from typing import Any
 
@@ -14,7 +15,10 @@ from src.core.config import Settings, get_settings
 from src.core.exceptions import SDLCAgentError
 from src.core.logging import setup_logging
 from src.github.client import GitHubClient
-from src.llm.gateway import LLMGateway
+from src.llm.gateway import LLMGateway, flush_langfuse
+
+# Register Langfuse flush on exit
+atexit.register(flush_langfuse)
 
 console = Console()
 
@@ -619,6 +623,13 @@ def config(ctx: click.Context) -> None:
         table.add_row("Max Iterations", str(settings.max_iterations))
         table.add_row("Log Level", settings.log_level)
         table.add_row("Workspace", str(settings.workspace_dir))
+
+        # Langfuse observability
+        if settings.langfuse_enabled:
+            table.add_row("Langfuse", "✅ Enabled")
+            table.add_row("Langfuse URL", settings.langfuse_base_url or "cloud.langfuse.com")
+        else:
+            table.add_row("Langfuse", "❌ Disabled")
 
         # Show masked tokens
         table.add_row(

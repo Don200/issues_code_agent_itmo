@@ -6,13 +6,76 @@ from typing import Any
 
 import httpx
 import structlog
-from openai import OpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.core.config import LLMProvider, Settings
 from src.core.exceptions import LLMError
 
 logger = structlog.get_logger()
+
+# Langfuse integration - initialized lazily
+_langfuse_client = None
+_langfuse_enabled = False
+
+
+def _init_langfuse(settings: Settings) -> bool:
+    """Initialize Langfuse if configured. Returns True if enabled."""
+    global _langfuse_client, _langfuse_enabled
+
+    if not settings.langfuse_enabled:
+        logger.info(
+            "langfuse_disabled",
+            reason="LANGFUSE_PUBLIC_KEY and/or LANGFUSE_SECRET_KEY not set",
+        )
+        return False
+
+    try:
+        from langfuse import Langfuse
+
+        _langfuse_client = Langfuse(
+            public_key=settings.langfuse_public_key,
+            secret_key=settings.langfuse_secret_key,
+            host=settings.langfuse_base_url,
+        )
+
+        # Verify connection
+        if _langfuse_client.auth_check():
+            _langfuse_enabled = True
+            logger.info(
+                "langfuse_enabled",
+                host=settings.langfuse_base_url or "default",
+            )
+            return True
+        else:
+            logger.warning("langfuse_auth_failed", reason="Auth check failed")
+            return False
+
+    except Exception as e:
+        logger.warning("langfuse_init_failed", error=str(e))
+        return False
+
+
+def _get_openai_client(settings: Settings) -> Any:
+    """Get OpenAI client - instrumented with Langfuse if enabled."""
+    if _langfuse_enabled:
+        from langfuse.openai import OpenAI
+    else:
+        from openai import OpenAI
+
+    return OpenAI(
+        api_key=settings.openai_api_key,
+        base_url=settings.openai_base_url,
+        timeout=settings.openai_timeout,
+    )
+
+
+def flush_langfuse() -> None:
+    """Flush Langfuse queue. Call this before process exit."""
+    if _langfuse_client is not None:
+        try:
+            _langfuse_client.flush()
+        except Exception as e:
+            logger.warning("langfuse_flush_failed", error=str(e))
 
 
 @dataclass
@@ -61,23 +124,26 @@ class OpenAIProvider(BaseLLMProvider):
 
     def __init__(
         self,
-        api_key: str,
+        client: Any,
         model: str = "gpt-4o-mini",
         base_url: str | None = None,
-        timeout: int = 120,
     ) -> None:
-        # Support for custom base_url (Azure, Ollama, vLLM, LocalAI, OpenRouter, etc.)
-        self._client = OpenAI(
-            api_key=api_key,
-            base_url=base_url,
-            timeout=timeout,
-        )
+        """
+        Initialize OpenAI provider.
+
+        Args:
+            client: Pre-configured OpenAI client (may be Langfuse-instrumented)
+            model: Model name to use
+            base_url: Base URL for logging purposes
+        """
+        self._client = client
         self._model = model
         self._base_url = base_url
         self._log = logger.bind(
             component="openai_provider",
             model=model,
             base_url=base_url or "default",
+            langfuse_enabled=_langfuse_enabled,
         )
 
     @retry(
@@ -298,19 +364,26 @@ class LLMGateway:
 
     def _init_provider(self) -> None:
         """Initialize the configured LLM provider."""
+        # Initialize Langfuse first (if configured)
+        _init_langfuse(self._settings)
+
         if self._settings.llm_provider == LLMProvider.OPENAI:
             if not self._settings.openai_api_key:
                 raise LLMError("OpenAI API key not configured", provider="openai")
+
+            # Get OpenAI client (instrumented with Langfuse if enabled)
+            client = _get_openai_client(self._settings)
+
             self._provider = OpenAIProvider(
-                api_key=self._settings.openai_api_key,
+                client=client,
                 model=self._settings.openai_model,
                 base_url=self._settings.openai_base_url,
-                timeout=self._settings.openai_timeout,
             )
             self._log.info(
                 "provider_initialized",
                 provider="openai",
                 base_url=self._settings.openai_base_url or "default",
+                langfuse_enabled=_langfuse_enabled,
             )
 
         elif self._settings.llm_provider == LLMProvider.YANDEX:

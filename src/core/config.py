@@ -66,6 +66,19 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", description="Logging level")
     log_format: str = Field(default="json", description="Log format (json or text)")
 
+    # Langfuse Configuration (optional - for LLM observability)
+    langfuse_public_key: str | None = Field(default=None, description="Langfuse public key")
+    langfuse_secret_key: str | None = Field(default=None, description="Langfuse secret key")
+    langfuse_base_url: str | None = Field(
+        default=None,
+        description="Langfuse base URL (for self-hosted)",
+    )
+
+    @property
+    def langfuse_enabled(self) -> bool:
+        """Check if Langfuse is configured and enabled."""
+        return bool(self.langfuse_public_key and self.langfuse_secret_key)
+
     # Paths
     workspace_dir: Path = Field(
         default=Path("./workspace"),
