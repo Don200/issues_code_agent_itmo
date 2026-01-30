@@ -267,18 +267,16 @@ def run_cycle(
 
         # Step 1: Process issue and create PR
         console.print("\n[bold]═══ Step 1: Creating PR from Issue ═══[/bold]")
-        with console.status("[bold green]Processing issue..."):
-            result = code_agent.process_issue(issue_number)
+        result = code_agent.process_issue(issue_number)
 
-        if not result["success"]:
+        if not result.get("success"):
             console.print("[bold red]❌ Failed to create PR from issue[/bold red]")
+            console.print(f"[dim]Summary: {result.get('summary', 'No details')}[/dim]")
             sys.exit(1)
 
-        pr_number = result["pr_number"]
-        console.print(f"[green]✅ PR #{pr_number} created[/green]")
-        console.print(f"   Branch: {result['branch']}")
-        console.print(f"   Files: {', '.join(result['files_changed'])}")
-        console.print(f"   URL: {result['pr_url']}")
+        console.print(f"[green]✅ Task completed[/green]")
+        console.print(f"   Branch: {result.get('branch', 'unknown')}")
+        console.print(f"   Summary: {result.get('summary', '')[:200]}")
 
         # Step 2: Review and fix loop
         console.print("\n[bold]═══ Step 2: Review & Fix Loop ═══[/bold]")
