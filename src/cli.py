@@ -64,12 +64,18 @@ def main(ctx: click.Context, log_level: str, log_format: str) -> None:
 @main.command()
 @click.argument("issue_number", type=int)
 @click.option(
+    "--max-steps",
+    default=15,
+    type=int,
+    help="Maximum agent steps (default: 15)",
+)
+@click.option(
     "--dry-run",
     is_flag=True,
     help="Analyze issue without making changes",
 )
 @click.pass_context
-def process(ctx: click.Context, issue_number: int, dry_run: bool) -> None:
+def process(ctx: click.Context, issue_number: int, max_steps: int, dry_run: bool) -> None:
     """Process a GitHub issue and create a Pull Request."""
     console.print(
         Panel(
@@ -90,7 +96,7 @@ def process(ctx: click.Context, issue_number: int, dry_run: bool) -> None:
             return
 
         with console.status("[bold green]Processing issue..."):
-            result = code_agent.process_issue(issue_number)
+            result = code_agent.process_issue(issue_number, max_iterations=max_steps)
 
         # Display results
         if result["success"]:
@@ -235,6 +241,12 @@ def check(ctx: click.Context, pr_number: int, issue: int | None) -> None:
 @main.command()
 @click.argument("issue_number", type=int)
 @click.option(
+    "--max-steps",
+    default=15,
+    type=int,
+    help="Maximum agent steps for initial processing (default: 15)",
+)
+@click.option(
     "--max-iterations",
     default=5,
     type=int,
@@ -250,6 +262,7 @@ def check(ctx: click.Context, pr_number: int, issue: int | None) -> None:
 def run_cycle(
     ctx: click.Context,
     issue_number: int,
+    max_steps: int,
     max_iterations: int,
     wait_ci: int,
 ) -> None:
@@ -272,7 +285,7 @@ def run_cycle(
         console.print("\n[bold]═══ Step 1: Process Issue & Create PR ═══[/bold]")
 
         with console.status("[bold green]Processing issue..."):
-            result = code_agent.process_issue(issue_number)
+            result = code_agent.process_issue(issue_number, max_iterations=max_steps)
 
         if not result["success"]:
             console.print("[bold red]❌ Failed to process issue[/bold red]")

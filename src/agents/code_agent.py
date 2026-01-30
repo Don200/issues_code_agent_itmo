@@ -34,9 +34,9 @@ class CodeAgent:
         self._tool_ctx = ToolContext(github_client, settings)
         self._tools = create_tools(self._tool_ctx)
 
-    def process_issue(self, issue_number: int) -> dict[str, Any]:
+    def process_issue(self, issue_number: int, max_iterations: int = 15) -> dict[str, Any]:
         """Process a GitHub issue and create a PR."""
-        logger.info("Processing issue", issue_number=issue_number)
+        logger.info("Processing issue", issue_number=issue_number, max_iterations=max_iterations)
 
         # Reset context for new task
         self._tool_ctx.task_finished = False
@@ -52,7 +52,7 @@ class CodeAgent:
                 system_prompt=CODE_AGENT_SYSTEM_PROMPT,
                 user_message=task,
                 tool_context=self._tool_ctx,
-                max_iterations=15,
+                max_iterations=max_iterations,
             )
 
             return {
