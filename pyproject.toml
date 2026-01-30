@@ -1,3 +1,7 @@
+[build-system]
+requires = ["uv"]
+build-backend = "uv"
+
 [tool.poetry]
 name = "your_project_name"
 version = "0.1.0"
@@ -8,7 +12,3 @@ license = "MIT"
 [tool.poetry.dependencies]
 python = "^3.9"
 # Add other dependencies here
-
-[build-system]
-requires = ["uv"]
-build-backend = "uv"
