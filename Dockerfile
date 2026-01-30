@@ -7,10 +7,13 @@ WORKDIR /app
 # Copy the requirements file
 COPY pyproject.toml .
 
-# Install uv for dependency management
-RUN apt-get update && apt-get install -y curl && \
-    curl -sSL https://raw.githubusercontent.com/uv/uv/master/get-uv.py | python3 - && \
-    uv install
+# Install uv instead of pip
+RUN apt-get update && \
+    apt-get install -y curl && \
+    curl -sSL https://get.uv.dev/uv.sh | sh
+
+# Install dependencies using uv
+RUN uv install
 
 # Copy the rest of the application code
 COPY . .
