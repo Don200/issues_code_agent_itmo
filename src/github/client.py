@@ -184,7 +184,7 @@ class GitHubClient:
                 self._log.warning(
                     "Cannot submit formal review on own PR, posting as comment",
                     pr_number=pr_number,
-                    event=event,
+                    review_event=event,
                 )
                 self.add_pr_comment(pr_number, f"**[{event}]**\n\n{body}")
             else:
