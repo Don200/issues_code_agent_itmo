@@ -228,24 +228,31 @@ def check(ctx: click.Context, pr_number: int, issue: int | None) -> None:
 
 @main.command()
 @click.argument("issue_number", type=int)
-@click.argument("pr_number", type=int)
 @click.option(
     "--max-iterations",
     default=5,
     type=int,
     help="Maximum fix iterations",
 )
+@click.option(
+    "--wait-ci",
+    default=30,
+    type=int,
+    help="Seconds to wait for CI between checks",
+)
 @click.pass_context
 def run_cycle(
     ctx: click.Context,
     issue_number: int,
-    pr_number: int,
     max_iterations: int,
+    wait_ci: int,
 ) -> None:
-    """Run full SDLC cycle with automatic fixes."""
+    """Run full SDLC cycle: Issue → PR → Review → Auto-fix loop."""
+    import time
+
     console.print(
         Panel(
-            f"Running SDLC Cycle\nIssue #{issue_number} → PR #{pr_number}",
+            f"Running Full SDLC Cycle for Issue #{issue_number}",
             title="🔄 Full Cycle",
             border_style="green",
         )
@@ -255,25 +262,47 @@ def run_cycle(
         settings = get_settings()
         code_agent, reviewer_agent = create_agents(settings)
 
+        # Step 1: Process issue and create PR
+        console.print("\n[bold]═══ Step 1: Creating PR from Issue ═══[/bold]")
+        with console.status("[bold green]Processing issue..."):
+            result = code_agent.process_issue(issue_number)
+
+        if not result["success"]:
+            console.print("[bold red]❌ Failed to create PR from issue[/bold red]")
+            sys.exit(1)
+
+        pr_number = result["pr_number"]
+        console.print(f"[green]✅ PR #{pr_number} created[/green]")
+        console.print(f"   Branch: {result['branch']}")
+        console.print(f"   Files: {', '.join(result['files_changed'])}")
+        console.print(f"   URL: {result['pr_url']}")
+
+        # Step 2: Review and fix loop
+        console.print("\n[bold]═══ Step 2: Review & Fix Loop ═══[/bold]")
+
         iteration = 0
         while iteration < max_iterations:
             iteration += 1
-            console.print(f"\n[bold]═══ Iteration {iteration}/{max_iterations} ═══[/bold]")
+            console.print(f"\n[bold cyan]── Iteration {iteration}/{max_iterations} ──[/bold cyan]")
+
+            # Wait a bit for CI to start
+            console.print(f"[dim]Waiting {wait_ci}s for CI...[/dim]")
+            time.sleep(wait_ci)
 
             # Check and review
-            with console.status("[bold]Reviewing..."):
+            with console.status("[bold]Reviewing PR..."):
                 decision = reviewer_agent.check_and_decide(pr_number, issue_number)
 
-            console.print(f"Action: {decision['action']}")
+            console.print(f"Action: [bold]{decision['action']}[/bold]")
             console.print(f"Reason: {decision['reason']}")
 
             if decision["action"] == "merge":
                 console.print("\n[bold green]✅ PR is ready to merge![/bold green]")
+                console.print(f"[dim]Merge it: gh pr merge {pr_number} --squash[/dim]")
                 break
             elif decision["action"] == "wait":
-                console.print("\n[yellow]⏳ Waiting for CI to complete...[/yellow]")
-                # In real implementation, would wait and retry
-                break
+                console.print("[yellow]⏳ CI still running, will check again...[/yellow]")
+                continue
             elif decision["action"] in ("fix_ci", "request_fixes"):
                 # Get review feedback for fixes
                 review_feedback = decision.get("review_summary", "")
@@ -284,7 +313,7 @@ def run_cycle(
                     )
                     review_feedback += f"\n\nIssues:\n{issues_text}"
 
-                console.print("\n[yellow]🔧 Applying fixes...[/yellow]")
+                console.print("[yellow]🔧 Applying fixes...[/yellow]")
                 with console.status("[bold]Generating fixes..."):
                     fix_result = code_agent.fix_based_on_review(
                         issue_number=issue_number,
@@ -293,7 +322,7 @@ def run_cycle(
                         iteration=iteration,
                     )
 
-                console.print(f"Fixed files: {', '.join(fix_result['files_changed'])}")
+                console.print(f"[green]Fixed files: {', '.join(fix_result['files_changed'])}[/green]")
         else:
             console.print(
                 f"\n[bold red]⚠️ Max iterations ({max_iterations}) reached[/bold red]"
