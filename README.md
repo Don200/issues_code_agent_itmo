@@ -1,209 +1,184 @@
-# SDLC Agent System
+# SDLC Agent
 
-Автоматизированная агентная система для полного цикла разработки ПО (SDLC) внутри GitHub.
+Автономный агент для автоматизации разработки в GitHub. Получает задачу из Issue, пишет код, создаёт PR, анализирует результаты CI и итеративно исправляет ошибки до успешного прохождения всех проверок.
 
-## Обзор
+<img src="docs/images/web-ui.png" width="700" alt="Web Interface">
 
-Система имитирует работу разработчика и ревьюера:
-- Анализирует задачи из GitHub Issues
-- Генерирует код и вносит изменения
-- Создаёт Pull Requests
-- Запускает CI/CD
-- Выполняет автоматический code review
-- Итеративно исправляет код до получения корректного результата
+## Возможности
 
-```
-┌─────────┐    ┌──────────────┐    ┌─────────────┐    ┌────────────────┐
-│  Issue  │───▶│  Code Agent  │───▶│     PR      │───▶│   CI/CD        │
-│ Created │    │  (generates  │    │   Created   │    │   Pipeline     │
-└─────────┘    │   code)      │    └─────────────┘    └───────┬────────┘
-               └──────────────┘                               │
-                      ▲                                       ▼
-                      │                              ┌─────────────────┐
-                      │         ┌────────────────────│  AI Reviewer    │
-                      │         │  (if changes       │  Agent          │
-                      │         │   requested)       └─────────────────┘
-                      └─────────┘
-```
+### Полный цикл разработки
+Агент выполняет весь цикл от задачи до готового PR:
+- Парсит описание Issue и формирует план
+- Анализирует структуру проекта
+- Пишет код с учётом существующего стиля
+- Создаёт ветку, коммитит, открывает PR
+- Ждёт результаты CI и анализирует логи при ошибках
+- Самостоятельно исправляет проблемы и повторяет цикл
 
-## Быстрый старт
+### AI Code Review
+Отдельный агент-ревьюер проверяет качество кода:
+- Анализирует diff на предмет ошибок и уязвимостей
+- Оценивает соответствие задаче из Issue
+- Оставляет комментарии в PR
+- Формирует рекомендации по исправлению
 
-### Требования
+### Observability через Langfuse
+Все вызовы LLM логируются в Langfuse:
+- Трейсинг цепочек запросов
+- Статистика по токенам и latency
+- Просмотр промптов и ответов
+- Анализ стоимости
 
-- Python 3.11+
-- Docker & Docker Compose
-- GitHub Token с правами на репозиторий
-- API ключ OpenAI или YandexGPT
+Подключение опционально — достаточно указать ключи в переменных окружения.
 
-### Установка
+### Web-интерфейс
+Встроенный UI для запуска агента из браузера:
+- Форма для указания репозитория и номера Issue
+- Real-time отображение логов выполнения
+- Статус текущей задачи
+- Ссылка на созданный PR
 
-1. **Клонируйте репозиторий:**
-```bash
-git clone https://github.com/your-org/sdlc-agent.git
-cd sdlc-agent
-```
+Запуск: `sdlc-agent web` или `docker compose up web`
 
-2. **Настройте переменные окружения:**
-```bash
-cp .env.example .env
-# Отредактируйте .env и добавьте ваши ключи
-```
+### Гибкая конфигурация LLM
+Поддержка любого OpenAI-совместимого API:
+- OpenAI (GPT-4, GPT-4o, GPT-4o-mini)
+- Azure OpenAI
+- Локальные модели через Ollama, vLLM, LM Studio
+- Любой сервис с OpenAI-совместимым эндпоинтом
 
-3. **Запуск через Docker:**
-```bash
-docker-compose up -d
-```
+### Stateful агент
+Агент сохраняет контекст между итерациями исправлений:
+- История сообщений не теряется
+- При фиксе CI-ошибок агент помнит что делал раньше
+- Не создаёт дублирующие ветки и PR
 
-4. **Или локальная установка:**
-```bash
-pip install -e ".[dev]"
-```
+## Демонстрация
 
-## Использование
+### Логи выполнения
+<img src="docs/images/logs.png" width="700" alt="Logs">
 
-### CLI команды
+### Результат в GitHub
+<img src="docs/images/github-pr.png" width="700" alt="GitHub PR">
 
-```bash
-# Обработать Issue и создать PR
-sdlc-agent process 42
+### AI Code Review
+<img src="docs/images/reviewer.png" width="700" alt="Reviewer">
 
-# Провести review PR
-sdlc-agent review 123 --issue 42
-
-# Проверить статус PR и получить рекомендацию
-sdlc-agent check 123 --issue 42
-
-# Запустить полный цикл с автофиксами
-sdlc-agent run-cycle 42 123 --max-iterations 5
-
-# Показать конфигурацию
-sdlc-agent config
-```
-
-### GitHub Actions
-
-Система автоматически запускается при:
-
-1. **Создании Issue** с меткой `agent` или `auto`:
-   - Code Agent анализирует Issue
-   - Генерирует код
-   - Создаёт Pull Request
-
-2. **Создании/обновлении PR**:
-   - AI Reviewer анализирует изменения
-   - Проверяет результаты CI
-   - Публикует review
-   - При необходимости запускает цикл исправлений
-
-### Пример Issue
-
-```markdown
-## Описание
-Добавить эндпоинт для получения списка пользователей
-
-## Требования
-- GET /api/users возвращает список пользователей
-- Поддержка пагинации (limit, offset)
-- Фильтрация по статусу (active, inactive)
-
-## Acceptance Criteria
-- Возвращает JSON с массивом пользователей
-- Пустой массив если пользователей нет
-- Правильная обработка невалидных параметров
-
-## Файлы
-- `src/api/routes.py`
-- `src/api/schemas.py`
-```
-
-## Конфигурация
-
-### Переменные окружения
-
-| Переменная | Описание | Обязательная |
-|------------|----------|--------------|
-| `GITHUB_TOKEN` | GitHub API токен | Да |
-| `GITHUB_REPOSITORY` | Репозиторий (owner/repo) | Да |
-| `LLM_PROVIDER` | Провайдер LLM (openai/yandex) | Нет (default: openai) |
-| `OPENAI_API_KEY` | Ключ OpenAI API | Если provider=openai |
-| `YANDEX_API_KEY` | Ключ YandexGPT API | Если provider=yandex |
-| `YANDEX_FOLDER_ID` | Yandex Cloud Folder ID | Если provider=yandex |
-| `MAX_ITERATIONS` | Макс. итераций исправлений | Нет (default: 5) |
-
-### GitHub Repository Secrets
-
-Добавьте в Settings → Secrets → Actions:
-- `OPENAI_API_KEY` или `YANDEX_API_KEY`/`YANDEX_FOLDER_ID`
-
-### GitHub Repository Variables
-
-Добавьте в Settings → Variables → Actions:
-- `LLM_PROVIDER` - провайдер LLM
-- `MAX_ITERATIONS` - максимум итераций
+### Трейсинг в Langfuse
+<img src="docs/images/langfuse.png" width="700" alt="Langfuse">
 
 ## Архитектура
 
 ```
-src/
-├── agents/
-│   ├── code_agent.py      # Генерация кода
-│   └── reviewer_agent.py  # Code review
-├── core/
-│   ├── config.py          # Конфигурация
-│   ├── state_machine.py   # Жизненный цикл Issue
-│   └── exceptions.py      # Исключения
-├── github/
-│   ├── client.py          # GitHub API клиент
-│   ├── issue_parser.py    # Парсинг Issue
-│   └── pr_manager.py      # Управление PR
-├── llm/
-│   └── gateway.py         # Интерфейс к LLM
-├── prompts/
-│   └── templates.py       # Промпты для LLM
-└── cli.py                 # CLI интерфейс
+┌─────────────────────────────────────────────────────────────┐
+│                        Web UI / CLI                         │
+└─────────────────────────────┬───────────────────────────────┘
+                              │
+          ┌───────────────────┼───────────────────┐
+          ▼                   ▼                   ▼
+   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+   │ Code Agent  │    │  Reviewer   │    │  LLM        │
+   │             │    │   Agent     │    │  Gateway    │
+   └──────┬──────┘    └──────┬──────┘    └──────┬──────┘
+          │                  │                  │
+          │    ┌─────────────┴─────────────┐    │
+          │    │                           │    │
+          ▼    ▼                           ▼    ▼
+   ┌─────────────────┐              ┌─────────────────┐
+   │  GitHub Client  │              │    Langfuse     │
+   │  (Issues, PRs,  │              │   (Tracing)     │
+   │   CI, Files)    │              │                 │
+   └─────────────────┘              └─────────────────┘
 ```
+
+### Инструменты агента
+Агент использует 9 инструментов для работы:
+
+| Инструмент | Назначение |
+|------------|------------|
+| `get_issue` | Получить описание задачи |
+| `list_files` | Просмотр структуры проекта |
+| `read_file` | Чтение файлов |
+| `write_file` | Создание/изменение файлов |
+| `create_branch` | Создание ветки |
+| `switch_branch` | Переключение на существующую ветку |
+| `commit_and_push` | Коммит и пуш изменений |
+| `create_pull_request` | Создание PR |
+| `get_ci_logs` | Получение логов CI для анализа ошибок |
+| `finish` | Завершение задачи |
+
+## Установка и запуск
+
+### Через Docker (рекомендуется)
+
+```bash
+# Склонировать репозиторий
+git clone <repo>
+cd sdlc-agent
+
+# Настроить переменные
+cp .env.example .env
+# Заполнить GITHUB_TOKEN, OPENAI_API_KEY
+
+# Запустить веб-интерфейс
+docker compose up web
+
+# Или обработать конкретный Issue
+docker compose run --rm agent process 42
+```
+
+### Локальная установка
+
+```bash
+pip install -e ".[dev]"
+
+# CLI
+sdlc-agent process 42
+sdlc-agent run-cycle 42
+sdlc-agent web
+```
+
+## Конфигурация
+
+| Переменная | Описание | По умолчанию |
+|------------|----------|--------------|
+| `GITHUB_TOKEN` | Токен с доступом к репозиторию | — |
+| `GITHUB_REPOSITORY` | Репозиторий (owner/repo) | — |
+| `OPENAI_API_KEY` | API ключ | — |
+| `OPENAI_MODEL` | Модель | gpt-4o-mini |
+| `OPENAI_BASE_URL` | Кастомный endpoint | — |
+| `MAX_ITERATIONS` | Лимит итераций автофикса | 5 |
+| `LANGFUSE_PUBLIC_KEY` | Ключ Langfuse | — |
+| `LANGFUSE_SECRET_KEY` | Секрет Langfuse | — |
+| `LANGFUSE_BASE_URL` | URL Langfuse | cloud |
+
+## Стек
+
+- **Python 3.11+**
+- **LangChain** — оркестрация агента и tool calling
+- **FastAPI** — веб-интерфейс
+- **PyGithub** — работа с GitHub API
+- **GitPython** — git-операции
+- **Langfuse** — observability
+- **structlog** — логирование
+- **Docker** — контейнеризация
 
 ## Разработка
 
-### Запуск тестов
-
 ```bash
-# Все тесты
+# Тесты
 pytest tests/ -v
 
-# С покрытием
-pytest tests/ -v --cov=src --cov-report=html
-
-# Конкретный тест
-pytest tests/test_issue_parser.py -v
-```
-
-### Линтинг
-
-```bash
-# Ruff
-ruff check src/ tests/
-
-# Black
-black src/ tests/
-
-# MyPy
+# Линтеры
+ruff check src/
+black src/
 mypy src/
-```
 
-### Docker
-
-```bash
-# Сборка образа
-docker-compose build
-
-# Запуск тестов в контейнере
-docker-compose run test
-
-# Линтинг в контейнере
-docker-compose run lint
+# Через Docker
+docker compose run --rm test
+docker compose run --rm lint
 ```
 
 ## Лицензия
 
-MIT License
+MIT
