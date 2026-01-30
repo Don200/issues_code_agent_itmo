@@ -1,12 +1,8 @@
-import subprocess
-import unittest
+import pytest
 
-class TestDependencyInstallation(unittest.TestCase):
-    def test_uv_installation(self):
-        """Test if uv is installed correctly."""
-        result = subprocess.run(['uv', '--version'], capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0)
-        self.assertIn('uv', result.stdout)
-
-if __name__ == '__main__':
-    unittest.main()
+def test_uv_dependency_installed() -> None:
+    """Test to ensure that uv is installed as a dependency."""
+    try:
+        import uv
+    except ImportError:
+        pytest.fail("uv is not installed. Please check your dependencies.")
