@@ -268,14 +268,33 @@ class GitHubClient:
 
             results = []
             for check in check_runs:
+                output_data = None
+                if check.output:
+                    output_data = {
+                        "title": check.output.title,
+                        "summary": check.output.summary,
+                    }
+                    # Add detailed text if available
+                    if hasattr(check.output, 'text') and check.output.text:
+                        output_data["text"] = check.output.text[:2000]  # Limit size
+                    # Add annotations (error locations)
+                    if hasattr(check.output, 'annotations') and check.output.annotations:
+                        output_data["annotations"] = [
+                            {
+                                "path": a.path,
+                                "line": a.start_line,
+                                "message": a.message,
+                                "level": a.annotation_level,
+                            }
+                            for a in check.output.annotations[:10]  # Limit to 10
+                        ]
+
                 results.append(CICheckResult(
                     name=check.name,
                     status=check.status,
                     conclusion=check.conclusion,
                     url=check.html_url,
-                    output={"title": check.output.title, "summary": check.output.summary}
-                    if check.output
-                    else None,
+                    output=output_data,
                 ))
             return results
         except GithubException as e:

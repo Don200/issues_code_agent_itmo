@@ -398,8 +398,13 @@ def _display_review_decision(decision: dict) -> None:
             console.print(f"  - [red]{check['name']}[/red]: {check.get('conclusion', 'failed')}")
             if check.get("output"):
                 output = check["output"]
-                if isinstance(output, dict) and output.get("summary"):
-                    console.print(f"    [dim]{output['summary'][:500]}[/dim]")
+                if isinstance(output, dict):
+                    if output.get("summary"):
+                        console.print(f"    [dim]{output['summary'][:500]}[/dim]")
+                    if output.get("annotations"):
+                        console.print("    [yellow]Errors:[/yellow]")
+                        for ann in output["annotations"][:5]:
+                            console.print(f"      [red]{ann['path']}:{ann['line']}[/red]: {ann['message']}")
                 elif isinstance(output, str):
                     console.print(f"    [dim]{output[:500]}[/dim]")
 
@@ -431,10 +436,18 @@ def _build_feedback_message(decision: dict) -> str:
             parts.append(f"- {check['name']}: {check.get('conclusion', 'failed')}")
             if check.get("output"):
                 output = check["output"]
-                if isinstance(output, dict) and output.get("summary"):
-                    parts.append(f"  Error details: {output['summary']}")
+                if isinstance(output, dict):
+                    if output.get("summary"):
+                        parts.append(f"  Error: {output['summary']}")
+                    if output.get("text"):
+                        parts.append(f"  Details: {output['text'][:1000]}")
+                    # Add annotations with file:line info
+                    if output.get("annotations"):
+                        parts.append("  Errors at:")
+                        for ann in output["annotations"]:
+                            parts.append(f"    - {ann['path']}:{ann['line']}: {ann['message']}")
                 elif isinstance(output, str):
-                    parts.append(f"  Error details: {output}")
+                    parts.append(f"  Error: {output}")
         parts.append("")
 
     # Add review summary
