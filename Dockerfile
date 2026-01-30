@@ -1,31 +1,19 @@
-FROM python:3.11-slim
+# Use the official Python image from the Docker Hub
+FROM python:3.9-slim
 
+# Set the working directory
 WORKDIR /app
 
-# Install git (needed for GitPython)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+# Copy the requirements file
+COPY pyproject.toml .
 
-# Copy dependency files
-COPY pyproject.toml ./
+# Install uv for dependency management
+RUN apt-get update && apt-get install -y curl && \
+    curl -sSL https://raw.githubusercontent.com/uv/uv/master/get-uv.py | python3 - && \
+    uv install
 
-# Install dependencies
-RUN pip install --no-cache-dir -e ".[dev]"
+# Copy the rest of the application code
+COPY . .
 
-# Copy source code
-COPY src/ ./src/
-COPY tests/ ./tests/
-COPY workflows/ ./workflows/
-
-# Set environment variables
-ENV PYTHONPATH=/app
-ENV PYTHONUNBUFFERED=1
-
-# Create non-root user
-RUN useradd -m -u 1000 agent && chown -R agent:agent /app
-USER agent
-
-# Default command
-ENTRYPOINT ["python", "-m", "src.cli"]
-CMD ["--help"]
+# Command to run the application
+CMD ["python", "src/cli.py"]
