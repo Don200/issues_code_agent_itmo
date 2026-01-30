@@ -178,11 +178,21 @@ class GitHubClient:
             )
             self._log.info("pr_review_added", pr_number=pr_number, event=event)
         except GithubException as e:
-            raise GitHubAPIError(
-                f"Failed to add review to PR #{pr_number}",
-                status_code=e.status,
-                details={"pr_number": pr_number, "event": event, "error": str(e)},
-            ) from e
+            # GitHub doesn't allow APPROVE/REQUEST_CHANGES on own PRs
+            # Fall back to regular comment
+            if e.status == 422 and event in ("APPROVE", "REQUEST_CHANGES"):
+                self._log.warning(
+                    "Cannot submit formal review on own PR, posting as comment",
+                    pr_number=pr_number,
+                    event=event,
+                )
+                self.add_pr_comment(pr_number, f"**[{event}]**\n\n{body}")
+            else:
+                raise GitHubAPIError(
+                    f"Failed to add review to PR #{pr_number}",
+                    status_code=e.status,
+                    details={"pr_number": pr_number, "event": event, "error": str(e)},
+                ) from e
 
     def get_pr_diff(self, pr_number: int) -> str:
         """
