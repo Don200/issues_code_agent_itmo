@@ -16,6 +16,10 @@ services:
       - LLM_PROVIDER=${LLM_PROVIDER:-openai}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - MAX_ITERATIONS=${MAX_ITERATIONS:-5}
+      # Langfuse
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-}
     volumes:
       - ./workspace:/app/workspace
       - ./logs:/app/logs
