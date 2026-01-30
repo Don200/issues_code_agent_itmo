@@ -33,5 +33,8 @@ RUN git config --global --add safe.directory '*' && \
     git config --global user.email "agent@sdlc.local" && \
     git config --global user.name "SDLC Agent"
 
+# Expose web port
+EXPOSE 8000
+
 ENTRYPOINT ["/entrypoint.sh", "sdlc-agent"]
-CMD ["--help"]
+CMD ["web", "--port", "8000"]

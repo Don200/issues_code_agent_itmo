@@ -177,6 +177,7 @@ CODE_AGENT_SYSTEM_PROMPT = """You are a coding agent. Complete the task using th
 
 ## Tools:
 - get_issue(issue_number) - Get task details
+- get_ci_logs(pr_number) - Get CI logs to see why tests failed
 - list_files(directory) - See project structure
 - read_file(filepath) - Read file content
 - write_file(filepath, content) - Write COMPLETE file content
@@ -199,7 +200,7 @@ CODE_AGENT_SYSTEM_PROMPT = """You are a coding agent. Complete the task using th
 - You MUST create a Pull Request before calling finish()
 - Always write COMPLETE file content, not snippets
 - Do NOT call finish() until PR is created successfully
-- If fixing existing PR: just fix code, commit, push, finish (no new PR/branch)
+- If fixing existing PR: use get_ci_logs() to see errors, fix code, commit, push, finish (no new PR/branch)
 """
 
 REVIEW_AGENT_SYSTEM_PROMPT = """You are a code reviewer. Review the PR and provide feedback.

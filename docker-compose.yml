@@ -1,7 +1,29 @@
 version: '3.8'
 
 services:
-  # Main agent - run commands with: docker-compose run --rm agent <command>
+  # Web interface - start with: docker-compose up web
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Langfuse
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-}
+    volumes:
+      - ./workspace:/app/workspace
+      - ./logs:/app/logs
+    working_dir: /app
+    # Default CMD is web server
+
+  # CLI agent - run commands with: docker-compose run --rm agent <command>
   agent:
     build:
       context: .
@@ -22,6 +44,7 @@ services:
       - ./workspace:/app/workspace
       - ./logs:/app/logs
     working_dir: /app
+    command: ["--help"]  # Override default web CMD
 
   # Test runner
   test:

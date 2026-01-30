@@ -73,6 +73,19 @@ def create_tools(ctx: ToolContext) -> list:
             logger.error("❌ Failed to get issue", error=str(e))
             return f"Error: {e}"
 
+    def get_ci_logs(pr_number: int) -> str:
+        """Get CI/workflow logs for a PR to see why tests failed."""
+        try:
+            logs = ctx.github.get_workflow_run_logs(pr_number)
+            if logs:
+                logger.info("📋 Got CI logs", pr_number=pr_number, length=len(logs))
+                return f"CI Logs for PR #{pr_number}:\n\n{logs}"
+            else:
+                return f"No failed workflow logs found for PR #{pr_number}"
+        except Exception as e:
+            logger.error("❌ Failed to get CI logs", error=str(e))
+            return f"Error getting CI logs: {e}"
+
     # =========================================================================
     # File Tools
     # =========================================================================
@@ -241,6 +254,11 @@ def create_tools(ctx: ToolContext) -> list:
             func=get_issue,
             name="get_issue",
             description="Get GitHub issue details. Args: issue_number (int)",
+        ),
+        StructuredTool.from_function(
+            func=get_ci_logs,
+            name="get_ci_logs",
+            description="Get CI/workflow logs to see why tests failed. Args: pr_number (int)",
         ),
         # Files
         StructuredTool.from_function(

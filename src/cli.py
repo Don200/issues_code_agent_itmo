@@ -466,6 +466,11 @@ def _build_feedback_message(decision: dict) -> str:
             parts.append(line)
         parts.append("")
 
+    # Add hint to use get_ci_logs if CI failed
+    if "failed_checks" in decision:
+        parts.append("TIP: Use get_ci_logs(pr_number) to see detailed error output from failed tests.")
+        parts.append("")
+
     parts.append("Fix the issues, commit, push, then call finish().")
 
     return "\n".join(parts)
@@ -804,6 +809,32 @@ def config(ctx: click.Context) -> None:
         console.print(f"[bold red]Error loading config:[/bold red] {e}")
         console.print("\nMake sure you have a .env file or environment variables set.")
         console.print("See .env.example for required variables.")
+
+
+@main.command()
+@click.option(
+    "--host",
+    default="0.0.0.0",
+    help="Host to bind to",
+)
+@click.option(
+    "--port",
+    default=8000,
+    type=int,
+    help="Port to listen on",
+)
+def web(host: str, port: int) -> None:
+    """Start the web interface."""
+    console.print(
+        Panel(
+            f"Starting web server on http://{host}:{port}",
+            title="🌐 SDLC Agent Web",
+            border_style="cyan",
+        )
+    )
+
+    from src.web.app import start_server
+    start_server(host=host, port=port)
 
 
 if __name__ == "__main__":
