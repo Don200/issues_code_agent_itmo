@@ -42,8 +42,6 @@ class Job:
 class ProcessRequest(BaseModel):
     repo: str  # e.g., "owner/repo"
     issue_number: int
-    github_token: str
-    openai_api_key: str | None = None
 
 
 class JobResponse(BaseModel):
@@ -189,14 +187,6 @@ HTML_TEMPLATE = """
                     <label>Issue Number</label>
                     <input type="number" id="issue" placeholder="123" required>
                 </div>
-                <div class="form-group">
-                    <label>GitHub Token</label>
-                    <input type="password" id="token" placeholder="ghp_..." required>
-                </div>
-                <div class="form-group">
-                    <label>OpenAI API Key (optional, uses server default)</label>
-                    <input type="password" id="openai" placeholder="sk-...">
-                </div>
                 <button type="submit" id="submitBtn">🚀 Process Issue</button>
             </form>
         </div>
@@ -224,9 +214,7 @@ HTML_TEMPLATE = """
 
             const data = {
                 repo: document.getElementById('repo').value,
-                issue_number: parseInt(document.getElementById('issue').value),
-                github_token: document.getElementById('token').value,
-                openai_api_key: document.getElementById('openai').value || null
+                issue_number: parseInt(document.getElementById('issue').value)
             };
 
             submitBtn.disabled = true;
@@ -346,12 +334,7 @@ async def process_issue(request: ProcessRequest, background_tasks: BackgroundTas
     jobs[job_id] = job
 
     # Run in background
-    background_tasks.add_task(
-        run_agent_job,
-        job,
-        request.github_token,
-        request.openai_api_key,
-    )
+    background_tasks.add_task(run_agent_job, job)
 
     return JobResponse(
         job_id=job.id,
@@ -377,7 +360,7 @@ async def get_job(job_id: str):
     )
 
 
-async def run_agent_job(job: Job, github_token: str, openai_api_key: str | None):
+async def run_agent_job(job: Job):
     """Run the SDLC agent in background."""
     import tempfile
 
@@ -385,11 +368,13 @@ async def run_agent_job(job: Job, github_token: str, openai_api_key: str | None)
     job.logs.append(f"🚀 Starting job for {job.repo} issue #{job.issue_number}")
 
     try:
-        # Set environment variables
-        os.environ["GITHUB_TOKEN"] = github_token
+        # Get tokens from environment
+        github_token = os.environ.get("GITHUB_TOKEN")
+        if not github_token:
+            raise Exception("GITHUB_TOKEN not configured on server")
+
+        # Set repo for this job
         os.environ["GITHUB_REPOSITORY"] = job.repo
-        if openai_api_key:
-            os.environ["OPENAI_API_KEY"] = openai_api_key
 
         job.logs.append("📦 Cloning repository...")
 
