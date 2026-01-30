@@ -1,5 +1,6 @@
 """CLI interface for SDLC Agent System."""
 
+import atexit
 import sys
 from typing import Any
 
@@ -14,7 +15,10 @@ from src.core.config import Settings, get_settings
 from src.core.exceptions import SDLCAgentError
 from src.core.logging import setup_logging
 from src.github.client import GitHubClient
-from src.llm.gateway import LLMGateway
+from src.llm.gateway import LLMGateway, flush_langfuse
+
+# Register Langfuse flush on exit
+atexit.register(flush_langfuse)
 
 console = Console()
 
@@ -25,9 +29,12 @@ def create_agents(settings: Settings) -> tuple[CodeAgent, ReviewerAgent]:
         token=settings.github_token,
         repository=settings.github_repository,
     )
-    llm_gateway = LLMGateway(settings)
 
-    code_agent = CodeAgent(settings, github_client, llm_gateway)
+    # CodeAgent uses LangChain with tool calling
+    code_agent = CodeAgent(settings, github_client)
+
+    # ReviewerAgent still uses LLMGateway (for now)
+    llm_gateway = LLMGateway(settings)
     reviewer_agent = ReviewerAgent(settings, github_client, llm_gateway)
 
     return code_agent, reviewer_agent
@@ -57,12 +64,18 @@ def main(ctx: click.Context, log_level: str, log_format: str) -> None:
 @main.command()
 @click.argument("issue_number", type=int)
 @click.option(
+    "--max-steps",
+    default=15,
+    type=int,
+    help="Maximum agent steps (default: 15)",
+)
+@click.option(
     "--dry-run",
     is_flag=True,
     help="Analyze issue without making changes",
 )
 @click.pass_context
-def process(ctx: click.Context, issue_number: int, dry_run: bool) -> None:
+def process(ctx: click.Context, issue_number: int, max_steps: int, dry_run: bool) -> None:
     """Process a GitHub issue and create a Pull Request."""
     console.print(
         Panel(
@@ -83,7 +96,7 @@ def process(ctx: click.Context, issue_number: int, dry_run: bool) -> None:
             return
 
         with console.status("[bold green]Processing issue..."):
-            result = code_agent.process_issue(issue_number)
+            result = code_agent.process_issue(issue_number, max_iterations=max_steps)
 
         # Display results
         if result["success"]:
@@ -91,15 +104,18 @@ def process(ctx: click.Context, issue_number: int, dry_run: bool) -> None:
 
             table = Table(show_header=False, box=None)
             table.add_row("Issue:", f"#{result['issue_number']}")
-            table.add_row("PR Created:", f"#{result['pr_number']}")
-            table.add_row("Branch:", result["branch"])
-            table.add_row("Files Changed:", str(len(result["files_changed"])))
-            table.add_row("PR URL:", result["pr_url"])
+            if result.get("branch"):
+                table.add_row("Branch:", result["branch"])
             console.print(table)
 
-            console.print("\n[dim]PR is now awaiting CI/CD and review.[/dim]")
+            if result.get("summary"):
+                console.print(f"\n[bold]Summary:[/bold] {result['summary']}")
+
+            console.print("\n[dim]Check GitHub for PR status.[/dim]")
         else:
             console.print("[bold red]❌ Failed to process issue[/bold red]")
+            if result.get("summary"):
+                console.print(f"[dim]{result['summary']}[/dim]")
             sys.exit(1)
 
     except SDLCAgentError as e:
@@ -224,26 +240,44 @@ def check(ctx: click.Context, pr_number: int, issue: int | None) -> None:
 
 @main.command()
 @click.argument("issue_number", type=int)
-@click.argument("pr_number", type=int)
+@click.option(
+    "--max-steps",
+    default=15,
+    type=int,
+    help="Maximum agent steps per iteration (default: 15)",
+)
 @click.option(
     "--max-iterations",
     default=5,
     type=int,
     help="Maximum fix iterations",
 )
+@click.option(
+    "--wait-ci",
+    default=30,
+    type=int,
+    help="Seconds to wait for CI between iterations",
+)
 @click.pass_context
 def run_cycle(
     ctx: click.Context,
     issue_number: int,
-    pr_number: int,
+    max_steps: int,
     max_iterations: int,
+    wait_ci: int,
 ) -> None:
-    """Run full SDLC cycle with automatic fixes."""
+    """Run full SDLC cycle: Issue → PR → Review → Auto-fix loop.
+
+    The agent maintains state between iterations - it remembers
+    what it did and just receives new feedback each time.
+    """
+    import time
+
     console.print(
         Panel(
-            f"Running SDLC Cycle\nIssue #{issue_number} → PR #{pr_number}",
-            title="🔄 Full Cycle",
-            border_style="green",
+            f"Running Full Cycle for Issue #{issue_number}",
+            title="🔄 SDLC Cycle",
+            border_style="magenta",
         )
     )
 
@@ -251,45 +285,90 @@ def run_cycle(
         settings = get_settings()
         code_agent, reviewer_agent = create_agents(settings)
 
+        # Step 1: Process issue and create PR
+        console.print("\n[bold]═══ Step 1: Process Issue & Create PR ═══[/bold]")
+
+        result = code_agent.process_issue(issue_number, max_iterations=max_steps)
+
+        if not result["success"]:
+            console.print("[bold red]❌ Failed to process issue[/bold red]")
+            if result.get("summary"):
+                console.print(f"[dim]{result['summary']}[/dim]")
+            sys.exit(1)
+
+        pr_number = result.get("pr_number")
+        pr_url = result.get("pr_url")
+        branch = result.get("branch")
+
+        if pr_url:
+            console.print(f"[green]✅ PR created: {pr_url}[/green]")
+        elif branch:
+            console.print(f"[yellow]Changes on branch: {branch}[/yellow]")
+
+        # If no PR was created, ask agent to create one
+        if not pr_number:
+            console.print("[yellow]⚠️ No PR created. Asking agent to create PR...[/yellow]")
+            fix_result = code_agent.continue_with_feedback(
+                feedback="You forgot to create a Pull Request! Please create a PR now with create_pull_request() and then call finish().",
+                max_iterations=5,
+            )
+            pr_number = fix_result.get("pr_number") or code_agent.state.pr_number
+            pr_url = code_agent.state.pr_url if code_agent.state else None
+
+            if pr_url:
+                console.print(f"[green]✅ PR created: {pr_url}[/green]")
+
+        if not pr_number:
+            console.print("[bold red]❌ Could not create PR. Exiting.[/bold red]")
+            sys.exit(1)
+
+        # Step 2: Review and fix loop
+        console.print("\n[bold]═══ Step 2: Review & Fix Loop ═══[/bold]")
+
         iteration = 0
         while iteration < max_iterations:
             iteration += 1
-            console.print(f"\n[bold]═══ Iteration {iteration}/{max_iterations} ═══[/bold]")
+            console.print(f"\n[bold cyan]── Review Iteration {iteration}/{max_iterations} ──[/bold cyan]")
+
+            # Wait for CI
+            console.print(f"[dim]Waiting {wait_ci}s for CI...[/dim]")
+            time.sleep(wait_ci)
 
             # Check and review
-            with console.status("[bold]Reviewing..."):
+            with console.status("[bold]Reviewing PR..."):
                 decision = reviewer_agent.check_and_decide(pr_number, issue_number)
 
-            console.print(f"Action: {decision['action']}")
-            console.print(f"Reason: {decision['reason']}")
+            # Display decision details
+            _display_review_decision(decision)
 
             if decision["action"] == "merge":
                 console.print("\n[bold green]✅ PR is ready to merge![/bold green]")
+                console.print(f"[dim]Merge it: gh pr merge {pr_number} --squash[/dim]")
                 break
+
             elif decision["action"] == "wait":
-                console.print("\n[yellow]⏳ Waiting for CI to complete...[/yellow]")
-                # In real implementation, would wait and retry
-                break
+                console.print("[yellow]⏳ CI still running, will check again...[/yellow]")
+                continue
+
             elif decision["action"] in ("fix_ci", "request_fixes"):
-                # Get review feedback for fixes
-                review_feedback = decision.get("review_summary", "")
-                if "issues" in decision:
-                    issues_text = "\n".join(
-                        f"- [{i['severity']}] {i['description']}"
-                        for i in decision["issues"]
-                    )
-                    review_feedback += f"\n\nIssues:\n{issues_text}"
+                # Build feedback message for the agent
+                feedback = _build_feedback_message(decision)
 
                 console.print("\n[yellow]🔧 Applying fixes...[/yellow]")
-                with console.status("[bold]Generating fixes..."):
-                    fix_result = code_agent.fix_based_on_review(
-                        issue_number=issue_number,
-                        pr_number=pr_number,
-                        review_feedback=review_feedback,
-                        iteration=iteration,
-                    )
+                console.print("[dim]Agent continues with full context from previous work[/dim]")
 
-                console.print(f"Fixed files: {', '.join(fix_result['files_changed'])}")
+                fix_result = code_agent.continue_with_feedback(
+                    feedback=feedback,
+                    max_iterations=max_steps,
+                )
+
+                if fix_result.get("success"):
+                    console.print("[green]✅ Fixes applied and pushed[/green]")
+                else:
+                    console.print("[yellow]⚠️ Fix attempt incomplete[/yellow]")
+
+                if fix_result.get("summary"):
+                    console.print(f"[dim]{fix_result['summary']}[/dim]")
         else:
             console.print(
                 f"\n[bold red]⚠️ Max iterations ({max_iterations}) reached[/bold red]"
@@ -299,6 +378,102 @@ def run_cycle(
     except SDLCAgentError as e:
         console.print(f"[bold red]Error:[/bold red] {e.message}")
         sys.exit(1)
+
+
+def _display_review_decision(decision: dict) -> None:
+    """Display review decision details."""
+    console.print(f"\n[bold]Decision:[/bold] {decision['action']}")
+    console.print(f"[bold]Reason:[/bold] {decision['reason']}")
+
+    # Show CI status if available
+    if "ci_status" in decision:
+        console.print("\n[bold]CI Status:[/bold]")
+        for check in decision["ci_status"]:
+            console.print(f"  - {check['name']}: {check['status']}")
+
+    # Show failed checks details
+    if "failed_checks" in decision:
+        console.print("\n[bold red]Failed CI Checks:[/bold red]")
+        for check in decision["failed_checks"]:
+            console.print(f"  - [red]{check['name']}[/red]: {check.get('conclusion', 'failed')}")
+            if check.get("output"):
+                output = check["output"]
+                if isinstance(output, dict):
+                    if output.get("summary"):
+                        console.print(f"    [dim]{output['summary'][:500]}[/dim]")
+                    if output.get("annotations"):
+                        console.print("    [yellow]Errors:[/yellow]")
+                        for ann in output["annotations"][:5]:
+                            console.print(f"      [red]{ann['path']}:{ann['line']}[/red]: {ann['message']}")
+                elif isinstance(output, str):
+                    console.print(f"    [dim]{output[:500]}[/dim]")
+
+    # Show review issues
+    if "issues" in decision:
+        console.print("\n[bold]Review Issues:[/bold]")
+        for issue in decision["issues"]:
+            severity = issue.get("severity", "info")
+            color = "red" if severity == "CRITICAL" else "yellow" if severity == "MAJOR" else "dim"
+            console.print(f"  - [{color}][{severity}][/{color}] {issue['description']}")
+            if issue.get("file"):
+                console.print(f"    [dim]File: {issue['file']}:{issue.get('line', '')}[/dim]")
+            if issue.get("suggestion"):
+                console.print(f"    [green]Suggestion: {issue['suggestion']}[/green]")
+
+    # Show review summary
+    if decision.get("review_summary"):
+        console.print(f"\n[bold]Review Summary:[/bold]\n{decision['review_summary']}")
+
+
+def _build_feedback_message(decision: dict) -> str:
+    """Build feedback message for agent from review decision."""
+    parts = ["CI/Review feedback - please fix the issues and push again:\n"]
+
+    # Add failed CI checks info
+    if "failed_checks" in decision:
+        parts.append("FAILED CI CHECKS:")
+        for check in decision["failed_checks"]:
+            parts.append(f"- {check['name']}: {check.get('conclusion', 'failed')}")
+            if check.get("output"):
+                output = check["output"]
+                if isinstance(output, dict):
+                    if output.get("summary"):
+                        parts.append(f"  Error: {output['summary']}")
+                    if output.get("text"):
+                        parts.append(f"  Details: {output['text'][:1000]}")
+                    # Add annotations with file:line info
+                    if output.get("annotations"):
+                        parts.append("  Errors at:")
+                        for ann in output["annotations"]:
+                            parts.append(f"    - {ann['path']}:{ann['line']}: {ann['message']}")
+                elif isinstance(output, str):
+                    parts.append(f"  Error: {output}")
+        parts.append("")
+
+    # Add review summary
+    if decision.get("review_summary"):
+        parts.append(f"REVIEW SUMMARY:\n{decision['review_summary']}\n")
+
+    # Add issues
+    if "issues" in decision:
+        parts.append("ISSUES TO FIX:")
+        for i in decision["issues"]:
+            line = f"- [{i['severity']}] {i['description']}"
+            if i.get("file"):
+                line += f" (file: {i['file']}:{i.get('line', '')})"
+            if i.get("suggestion"):
+                line += f"\n  Suggestion: {i['suggestion']}"
+            parts.append(line)
+        parts.append("")
+
+    # Add hint to use get_ci_logs if CI failed
+    if "failed_checks" in decision:
+        parts.append("TIP: Use get_ci_logs(pr_number) to see detailed error output from failed tests.")
+        parts.append("")
+
+    parts.append("Fix the issues, commit, push, then call finish().")
+
+    return "\n".join(parts)
 
 
 @main.command()
@@ -609,16 +784,18 @@ def config(ctx: click.Context) -> None:
         table.add_column("Value", style="green")
 
         table.add_row("Repository", settings.github_repository)
-        table.add_row("LLM Provider", settings.llm_provider.value)
-        table.add_row(
-            "Model",
-            settings.openai_model
-            if settings.llm_provider.value == "openai"
-            else settings.yandex_model,
-        )
+        table.add_row("Model", settings.openai_model)
+        table.add_row("Base URL", settings.openai_base_url or "api.openai.com")
         table.add_row("Max Iterations", str(settings.max_iterations))
         table.add_row("Log Level", settings.log_level)
         table.add_row("Workspace", str(settings.workspace_dir))
+
+        # Langfuse observability
+        if settings.langfuse_enabled:
+            table.add_row("Langfuse", "✅ Enabled")
+            table.add_row("Langfuse URL", settings.langfuse_base_url or "cloud.langfuse.com")
+        else:
+            table.add_row("Langfuse", "❌ Disabled")
 
         # Show masked tokens
         table.add_row(
@@ -632,6 +809,32 @@ def config(ctx: click.Context) -> None:
         console.print(f"[bold red]Error loading config:[/bold red] {e}")
         console.print("\nMake sure you have a .env file or environment variables set.")
         console.print("See .env.example for required variables.")
+
+
+@main.command()
+@click.option(
+    "--host",
+    default="0.0.0.0",
+    help="Host to bind to",
+)
+@click.option(
+    "--port",
+    default=8000,
+    type=int,
+    help="Port to listen on",
+)
+def web(host: str, port: int) -> None:
+    """Start the web interface."""
+    console.print(
+        Panel(
+            f"Starting web server on http://{host}:{port}",
+            title="🌐 SDLC Agent Web",
+            border_style="cyan",
+        )
+    )
+
+    from src.web.app import start_server
+    start_server(host=host, port=port)
 
 
 if __name__ == "__main__":

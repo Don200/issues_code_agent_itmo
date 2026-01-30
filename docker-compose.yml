@@ -1,57 +1,57 @@
 version: '3.8'
 
 services:
-  sdlc-agent:
+  # Web interface - start with: docker-compose up web
+  web:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: sdlc-agent
+    ports:
+      - "8000:8000"
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Langfuse
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-}
+    volumes:
+      - ./workspace:/app/workspace
+      - ./logs:/app/logs
+    working_dir: /app
+    # Default CMD is web server
+
+  # CLI agent - run commands with: docker-compose run --rm agent <command>
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
     environment:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_REPOSITORY=${GITHUB_REPOSITORY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - YANDEX_API_KEY=${YANDEX_API_KEY:-}
-      - YANDEX_FOLDER_ID=${YANDEX_FOLDER_ID:-}
-      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - MAX_ITERATIONS=${MAX_ITERATIONS:-5}
+      # Langfuse
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-}
     volumes:
       - ./workspace:/app/workspace
       - ./logs:/app/logs
     working_dir: /app
-    stdin_open: true
-    tty: true
-
-  # Development service with hot reload
-  dev:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: sdlc-agent-dev
-    environment:
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - GITHUB_REPOSITORY=${GITHUB_REPOSITORY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - YANDEX_API_KEY=${YANDEX_API_KEY:-}
-      - YANDEX_FOLDER_ID=${YANDEX_FOLDER_ID:-}
-      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
-      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
-      - MAX_ITERATIONS=${MAX_ITERATIONS:-5}
-    volumes:
-      - .:/app
-      - ./workspace:/app/workspace
-      - ./logs:/app/logs
-    working_dir: /app
-    command: ["--help"]
-    stdin_open: true
-    tty: true
+    command: ["--help"]  # Override default web CMD
 
   # Test runner
   test:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: sdlc-agent-test
     environment:
       - PYTHONPATH=/app
     volumes:
@@ -60,12 +60,11 @@ services:
     entrypoint: ["pytest"]
     command: ["tests/", "-v", "--cov=src", "--cov-report=term-missing"]
 
-  # Linting service
+  # Linting
   lint:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: sdlc-agent-lint
     volumes:
       - .:/app
     working_dir: /app

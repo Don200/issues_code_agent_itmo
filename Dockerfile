@@ -16,16 +16,25 @@ RUN pip install --no-cache-dir -e ".[dev]"
 # Copy source code
 COPY src/ ./src/
 COPY tests/ ./tests/
-COPY workflows/ ./workflows/
+
+# Copy entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-# Create non-root user
-RUN useradd -m -u 1000 agent && chown -R agent:agent /app
-USER agent
+# Create workspace directory
+RUN mkdir -p /app/workspace /app/logs
 
-# Default command
-ENTRYPOINT ["python", "-m", "src.cli"]
-CMD ["--help"]
+# Configure git for commits
+RUN git config --global --add safe.directory '*' && \
+    git config --global user.email "agent@sdlc.local" && \
+    git config --global user.name "SDLC Agent"
+
+# Expose web port
+EXPOSE 8000
+
+ENTRYPOINT ["/entrypoint.sh", "sdlc-agent"]
+CMD ["web", "--port", "8000"]

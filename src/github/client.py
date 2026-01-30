@@ -5,6 +5,7 @@ from typing import Any
 
 import structlog
 from github import Auth, Github, GithubException
+from github.GithubObject import NotSet
 from github.Issue import Issue
 from github.PullRequest import PullRequest
 from github.Repository import Repository
@@ -176,13 +177,23 @@ class GitHubClient:
                 event=event,
                 comments=comments or [],
             )
-            self._log.info("pr_review_added", pr_number=pr_number, event=event)
+            self._log.info("pr_review_added", pr_number=pr_number, review_event=event)
         except GithubException as e:
-            raise GitHubAPIError(
-                f"Failed to add review to PR #{pr_number}",
-                status_code=e.status,
-                details={"pr_number": pr_number, "event": event, "error": str(e)},
-            ) from e
+            # GitHub doesn't allow APPROVE/REQUEST_CHANGES on own PRs
+            # Fall back to regular comment
+            if e.status == 422 and event in ("APPROVE", "REQUEST_CHANGES"):
+                self._log.warning(
+                    "Cannot submit formal review on own PR, posting as comment",
+                    pr_number=pr_number,
+                    review_event=event,
+                )
+                self.add_pr_comment(pr_number, f"**[{event}]**\n\n{body}")
+            else:
+                raise GitHubAPIError(
+                    f"Failed to add review to PR #{pr_number}",
+                    status_code=e.status,
+                    details={"pr_number": pr_number, "event": event, "error": str(e)},
+                ) from e
 
     def get_pr_diff(self, pr_number: int) -> str:
         """
@@ -258,14 +269,63 @@ class GitHubClient:
 
             results = []
             for check in check_runs:
+                output_data = None
+
+                # Handle check.output (can be NotSet or actual data)
+                if check.output and check.output is not NotSet:
+                    title = check.output.title if check.output.title is not NotSet else None
+                    summary = check.output.summary if check.output.summary is not NotSet else None
+                    text = None
+                    if hasattr(check.output, 'text') and check.output.text is not NotSet:
+                        text = check.output.text
+
+                    if title or summary or text:
+                        output_data = {}
+                        if title:
+                            output_data["title"] = title
+                        if summary:
+                            output_data["summary"] = summary
+                        if text:
+                            output_data["text"] = text[:2000]
+
+                # Fetch annotations separately (PyGithub requires this)
+                try:
+                    annotations = list(check.get_annotations()[:10])
+                    if annotations:
+                        if output_data is None:
+                            output_data = {}
+                        output_data["annotations"] = [
+                            {
+                                "path": a.path,
+                                "line": a.start_line,
+                                "message": a.message,
+                                "level": a.annotation_level,
+                            }
+                            for a in annotations
+                        ]
+                except Exception:
+                    pass  # Annotations not available
+
+                # Add URL to output for failed checks
+                if check.conclusion != "success" and check.html_url:
+                    if output_data is None:
+                        output_data = {}
+                    output_data["url"] = check.html_url
+
+                    logger.debug(
+                        "CI check failed",
+                        name=check.name,
+                        conclusion=check.conclusion,
+                        url=check.html_url,
+                        has_summary=output_data.get("summary") is not None,
+                    )
+
                 results.append(CICheckResult(
                     name=check.name,
                     status=check.status,
                     conclusion=check.conclusion,
                     url=check.html_url,
-                    output={"title": check.output.title, "summary": check.output.summary}
-                    if check.output
-                    else None,
+                    output=output_data,
                 ))
             return results
         except GithubException as e:
@@ -274,6 +334,58 @@ class GitHubClient:
                 status_code=e.status,
                 details={"pr_number": pr_number, "error": str(e)},
             ) from e
+
+    def get_workflow_run_logs(self, pr_number: int) -> str | None:
+        """
+        Get workflow run logs for a PR's failed checks.
+
+        Args:
+            pr_number: PR number
+
+        Returns:
+            Log content or None if not available
+        """
+        import io
+        import zipfile
+
+        import requests
+
+        try:
+            pr = self.get_pull_request(pr_number)
+            commit = self.repo.get_commit(pr.head.sha)
+
+            # Find failed workflow runs
+            for run in self.repo.get_workflow_runs(head_sha=pr.head.sha):
+                if run.conclusion == "failure":
+                    # Get logs URL
+                    logs_url = run.logs_url
+
+                    # Download logs (requires auth)
+                    headers = {"Authorization": f"Bearer {self._token}"}
+                    response = requests.get(logs_url, headers=headers, timeout=30)
+
+                    if response.status_code == 200:
+                        # Logs come as a zip file
+                        zip_file = zipfile.ZipFile(io.BytesIO(response.content))
+
+                        # Extract and combine relevant log files
+                        logs = []
+                        for name in zip_file.namelist():
+                            if name.endswith(".txt"):
+                                content = zip_file.read(name).decode("utf-8", errors="ignore")
+                                # Look for error sections
+                                if "error" in content.lower() or "failed" in content.lower():
+                                    # Get last 200 lines which usually contain the error
+                                    lines = content.strip().split("\n")
+                                    logs.append(f"=== {name} ===\n" + "\n".join(lines[-200:]))
+
+                        if logs:
+                            return "\n\n".join(logs)[:5000]  # Limit total size
+
+            return None
+        except Exception as e:
+            logger.warning("Failed to get workflow logs", error=str(e))
+            return None
 
     def get_file_content(self, path: str, ref: str = "main") -> str | None:
         """

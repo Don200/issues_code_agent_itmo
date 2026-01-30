@@ -150,7 +150,7 @@ class PRManager:
             event: Review event (COMMENT, APPROVE, REQUEST_CHANGES)
         """
         self._client.add_pr_review(pr_number, body, event)
-        self._log.info("review_added", pr_number=pr_number, event=event)
+        self._log.info("review_added", pr_number=pr_number, review_event=event)
 
     def add_comment(self, pr_number: int, body: str) -> None:
         """

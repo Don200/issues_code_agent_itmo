@@ -88,9 +88,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          YANDEX_API_KEY: ${{ secrets.YANDEX_API_KEY }}
-          YANDEX_FOLDER_ID: ${{ secrets.YANDEX_FOLDER_ID }}
-          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'openai' }}
         run: |
           ISSUE_ARG=""
           if [ -n "${{ steps.extract_issue.outputs.issue_number }}" ]; then
@@ -105,9 +102,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          YANDEX_API_KEY: ${{ secrets.YANDEX_API_KEY }}
-          YANDEX_FOLDER_ID: ${{ secrets.YANDEX_FOLDER_ID }}
-          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'openai' }}
         run: |
           ISSUE_ARG=""
           if [ -n "${{ steps.extract_issue.outputs.issue_number }}" ]; then
@@ -187,9 +181,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          YANDEX_API_KEY: ${{ secrets.YANDEX_API_KEY }}
-          YANDEX_FOLDER_ID: ${{ secrets.YANDEX_FOLDER_ID }}
-          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'openai' }}
         run: |
           if [ -z "${{ steps.extract_issue.outputs.issue_number }}" ]; then
             echo "No linked issue found. Cannot run fix cycle."
@@ -198,6 +189,5 @@ jobs:
 
           python -m src.cli run-cycle \
             ${{ steps.extract_issue.outputs.issue_number }} \
-            ${{ github.event.pull_request.number }} \
             --max-iterations 1 \
             --log-level INFO
